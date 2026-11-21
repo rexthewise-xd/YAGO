@@ -1,0 +1,298 @@
+use std::path::{Path, PathBuf};
+
+use storage::models::{ImportCandidate, ModRecord};
+use uuid::Uuid;
+
+use crate::commands::library::FileNode;
+use crate::state::AppCore;
+
+impl AppCore {
+    pub async fn scan_mod_directory(
+        &self,
+        path: String,
+        game_id: String,
+    ) -> Result<Vec<ImportCandidate>, String> {
+        let path_buf = PathBuf::from(path);
+        let librarian = self.librarian.lock().await;
+        storage::import::Importer::scan_directory(&path_buf, &librarian.assets_root, &game_id)
+            .map_err(|e| e.to_string())
+    }
+
+    pub async fn import_mod_with_name(
+        &self,
+        game_id: String,
+        path: String,
+        custom_name: Option<String>,
+    ) -> Result<ModRecord, String> {
+        let path_buf = PathBuf::from(path);
+        let record = {
+            let librarian = self.librarian.lock().await;
+            storage::import::Importer::import_mod_with_name(
+                &librarian,
+                path_buf,
+                game_id.clone(),
+                custom_name,
+            )
+            .await
+            .map_err(|e| e.to_string())?
+        };
+
+        let new_db = self.librarian.lock().await.load_game_db(&game_id).await;
+        if let Ok(new_db) = new_db {
+            self.game_dbs.lock().await.insert(game_id.clone(), new_db);
+            self.emit_library().await;
+        }
+
+        Ok(record)
+    }
+
+    pub async fn import_mod(&self, game_id: String, path: String) -> Result<ModRecord, String> {
+        self.import_mod_with_name(game_id, path, None).await
+    }
+
+    pub async fn add_mod(&self, game_id: String, path: String) -> Result<ModRecord, String> {
+        self.import_mod(game_id, path).await
+    }
+
+    pub async fn validate_mod(&self, mod_id: String) -> Result<bool, String> {
+        let root = self.mod_root(&mod_id).await?;
+        if !root.exists() {
+            return Err("Mod directory does not exist".to_string());
+        }
+
+        let mut ini_found = 0;
+        for entry in walkdir::WalkDir::new(&root)
+            .max_depth(4)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            let path = entry.path();
+            let is_ini = path.is_file()
+                && (path
+                    .extension()
+                    .and_then(|s| s.to_str())
+                    .map(|s| s.to_lowercase())
+                    == Some("ini".to_string())
+                    || path
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .map(|s| s.to_lowercase().ends_with(".ini.yago_source"))
+                        .unwrap_or(false));
+
+            if is_ini {
+                let file_name = path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
+                let bytes = std::fs::read(path).map_err(|e| format!("Failed to read {}: {}", file_name, e))?;
+                let content = String::from_utf8_lossy(&bytes);
+                let doc = match ini::parser::parse_ini(&content) {
+                    Ok((_, doc)) => doc,
+                    Err(e) => {
+                        return Err(format!("Syntax error in {}: {}", file_name, e));
+                    }
+                };
+                mod_patches::Validator::validate_logic(&doc)
+                    .map_err(|e| format!("Logic error in {}: {}", file_name, e))?;
+                ini_found += 1;
+            }
+        }
+
+        if ini_found == 0 {
+            return Err("No INI logic files found in mod directory".to_string());
+        }
+
+        Ok(true)
+    }
+
+    pub async fn delete_mod(&self, mod_id: String) -> Result<(), String> {
+        let mod_uuid = Uuid::parse_str(&mod_id).map_err(|e| e.to_string())?;
+        let mut dbs = self.game_dbs.lock().await;
+
+        for (game_id, db) in dbs.iter_mut() {
+            if let Some(record) = db.mods.remove(&mod_uuid) {
+                if record.path.exists() {
+                    let _ = std::fs::remove_dir_all(&record.path);
+                }
+
+                for profile in db.profiles.values_mut() {
+                    profile.enabled_mod_ids.retain(|id| *id != mod_uuid);
+                    profile.load_order.retain(|id| *id != mod_uuid);
+                }
+
+                self.librarian
+                    .lock()
+                    .await
+                    .save_game_db(game_id, db)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                drop(dbs);
+                self.emit_library().await;
+                return Ok(());
+            }
+        }
+
+        Err("Mod not found".to_string())
+    }
+
+    pub async fn toggle_mod(
+        &self,
+        game_id: String,
+        mod_id: String,
+        enabled: bool,
+    ) -> Result<(), String> {
+        let mod_uuid = Uuid::parse_str(&mod_id).map_err(|e| e.to_string())?;
+        let mut dbs = self.game_dbs.lock().await;
+
+        if let Some(db) = dbs.get_mut(&game_id) {
+            if let Some(game_config) = db.games.get(&game_id) {
+                let p_uuid =
+                    Uuid::parse_str(&game_config.active_profile_id).map_err(|e| e.to_string())?;
+                if let Some(profile) = db.profiles.get_mut(&p_uuid) {
+                    if enabled {
+                        if !profile.enabled_mod_ids.contains(&mod_uuid) {
+                            profile.enabled_mod_ids.push(mod_uuid);
+                        }
+                    } else {
+                        profile.enabled_mod_ids.retain(|id| *id != mod_uuid);
+                    }
+
+                    self.librarian
+                        .lock()
+                        .await
+                        .save_game_db(&game_id, db)
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    drop(dbs);
+                    self.emit_library().await;
+                    return Ok(());
+                }
+            }
+        }
+
+        Err("Game or Profile not found".to_string())
+    }
+
+    pub async fn update_mod_tags(
+        &self,
+        game_id: String,
+        mod_id: String,
+        tags: Vec<String>,
+    ) -> Result<(), String> {
+        let mod_uuid = Uuid::parse_str(&mod_id).map_err(|e| e.to_string())?;
+        let mut dbs = self.game_dbs.lock().await;
+
+        if let Some(db) = dbs.get_mut(&game_id) {
+            if let Some(record) = db.mods.get_mut(&mod_uuid) {
+                record.config.tags = tags;
+                self.librarian
+                    .lock()
+                    .await
+                    .save_game_db(&game_id, db)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                drop(dbs);
+                self.emit_library().await;
+                return Ok(());
+            }
+        }
+
+        Err("Mod not found".to_string())
+    }
+
+    async fn mod_root(&self, mod_id: &str) -> Result<PathBuf, String> {
+        let mod_uuid = Uuid::parse_str(mod_id).map_err(|e| e.to_string())?;
+        let dbs = self.game_dbs.lock().await;
+        for db in dbs.values() {
+            if let Some(record) = db.mods.get(&mod_uuid) {
+                return Ok(record.path.clone());
+            }
+        }
+        Err("Mod not found".to_string())
+    }
+
+    pub async fn get_mod_files(&self, mod_id: String) -> Result<Vec<FileNode>, String> {
+        let root = self.mod_root(&mod_id).await?;
+        if !root.exists() {
+            return Ok(vec![]);
+        }
+        Ok(build_file_tree(&root, &root, 0))
+    }
+
+    pub async fn read_mod_file(&self, mod_id: String, file_path: String) -> Result<String, String> {
+        let resolved = self.resolve_mod_file(&mod_id, &file_path).await?;
+        std::fs::read_to_string(&resolved).map_err(|e| e.to_string())
+    }
+
+    pub async fn write_mod_file(
+        &self,
+        mod_id: String,
+        file_path: String,
+        content: String,
+    ) -> Result<(), String> {
+        let resolved = self.resolve_mod_file(&mod_id, &file_path).await?;
+        std::fs::write(&resolved, content).map_err(|e| e.to_string())
+    }
+
+    async fn resolve_mod_file(&self, mod_id: &str, file_path: &str) -> Result<PathBuf, String> {
+        let root = self.mod_root(mod_id).await?;
+        let root = root.canonicalize().map_err(|e| e.to_string())?;
+        let joined = root.join(file_path);
+        let resolved = joined.canonicalize().map_err(|e| e.to_string())?;
+        if !resolved.starts_with(&root) {
+            return Err("Path escapes mod directory".to_string());
+        }
+        Ok(resolved)
+    }
+}
+
+fn build_file_tree(dir: &Path, root: &Path, depth: usize) -> Vec<FileNode> {
+    if depth > 8 {
+        return vec![];
+    }
+    let mut nodes = Vec::new();
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return nodes;
+    };
+    let mut entries: Vec<_> = entries.filter_map(|e| e.ok()).collect();
+    entries.sort_by_key(|e| e.file_name());
+    for entry in entries {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        let rel = path
+            .strip_prefix(root)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .to_string();
+        if path.is_dir() {
+            nodes.push(FileNode {
+                id: rel,
+                name,
+                kind: "folder".to_string(),
+                size: None,
+                children: Some(build_file_tree(&path, root, depth + 1)),
+            });
+        } else {
+            let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+            nodes.push(FileNode {
+                id: rel,
+                name,
+                kind: "file".to_string(),
+                size: Some(format_size(size)),
+                children: None,
+            });
+        }
+    }
+    nodes
+}
+
+fn format_size(bytes: u64) -> String {
+    if bytes >= 1024 * 1024 {
+        format!("{:.1} MB", bytes as f64 / 1024.0 / 1024.0)
+    } else if bytes >= 1024 {
+        format!("{:.1} KB", bytes as f64 / 1024.0)
+    } else {
+        format!("{} B", bytes)
+    }
+}

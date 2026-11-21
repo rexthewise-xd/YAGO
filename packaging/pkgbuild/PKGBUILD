@@ -1,0 +1,64 @@
+# Maintainer: rex <https://github.com/rexthewise-xd/YAGO>
+pkgname=yago
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="High-performance game mod manager for 3DMigoto-compatible games"
+arch=('x86_64')
+url="https://github.com/rexthewise-xd/YAGO"
+license=('custom:Proprietary')
+depends=('webkit2gtk-4.1' 'gtk3' 'openssl' 'xdotool')
+makedepends=('cargo' 'rust' 'protobuf' 'gcc')
+optdepends=(
+    'wine: Run Windows games on Linux'
+    'gamescope: Micro-compositor for gaming'
+    'mangohud: Performance overlay'
+)
+provides=('yago')
+conflicts=('yago-git' 'yago-bin')
+
+find_workspace_root() {
+    local d="$startdir"
+    while [ "$d" != "/" ]; do
+        if [ -f "$d/Cargo.toml" ] && [ -d "$d/src-ui-rs" ]; then
+            echo "$d"
+            return 0
+        fi
+        d="$(dirname "$d")"
+    done
+    echo "$srcdir"
+}
+
+build() {
+    local root
+    root="$(find_workspace_root)"
+    cd "$root"
+
+    # Clear makepkg-injected flags that conflict with ring C/assembly build
+    env -u CFLAGS -u CXXFLAGS -u LDFLAGS -u RUSTFLAGS cargo build --release -p yago-ui
+}
+
+package() {
+    local root
+    root="$(find_workspace_root)"
+
+    # Binary
+    install -Dm755 "$root/target/release/yago-ui" "$pkgdir/usr/bin/yago"
+
+    # Desktop file
+    if [ -f "$startdir/yago.desktop" ]; then
+        install -Dm644 "$startdir/yago.desktop" "$pkgdir/usr/share/applications/yago.desktop"
+    elif [ -f "$root/packaging/pkgbuild/yago.desktop" ]; then
+        install -Dm644 "$root/packaging/pkgbuild/yago.desktop" "$pkgdir/usr/share/applications/yago.desktop"
+    fi
+
+    # Icons
+    install -Dm644 "$root/src-ui-rs/assets/icons/32x32.png" "$pkgdir/usr/share/icons/hicolor/32x32/apps/yago.png"
+    install -Dm644 "$root/src-ui-rs/assets/icons/128x128.png" "$pkgdir/usr/share/icons/hicolor/128x128/apps/yago.png"
+    install -Dm644 "$root/src-ui-rs/assets/icons/Square150x150Logo.png" "$pkgdir/usr/share/icons/hicolor/256x256/apps/yago.png"
+    install -Dm644 "$root/src-ui-rs/assets/icons/icon.png" "$pkgdir/usr/share/icons/hicolor/512x512/apps/yago.png"
+
+    # License
+    if [ -f "$root/LICENSE" ]; then
+        install -Dm644 "$root/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+    fi
+}

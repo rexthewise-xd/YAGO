@@ -1,0 +1,6 @@
+[workspace]
+members = [
+  "crates/*",
+  "src-ui-rs"
+]
+resolver = "2"

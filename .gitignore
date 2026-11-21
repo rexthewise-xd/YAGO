@@ -1,0 +1,70 @@
+# YAGO - The Sealed Diamond
+# Proprietary Git Ignore
+
+# --- Build Artifacts ---
+target/
+src-ui-rs/dist/
+dist/
+build/
+.flatpak-builder/
+release/build/
+release/latest/
+release/older/
+
+# --- Caches & Dependencies ---
+.cache/
+.cargo/
+
+# --- Logs & Temp ---
+*.log
+*.tmp
+tmp/
+build.log
+.gemini/tmp/
+
+# --- IDE & System ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# --- Binaries & Archives ---
+*.exe
+*.msi
+*.msm
+*.msp
+*.pdb
+*.zip
+*.tar.gz
+*.7z
+*.pkg.tar.zst
+appimagetool-*.AppImage
+
+# --- Development Environment ---
+# Note: Personal info/.env syncing is permitted as per Sovereign Directive
+# .env 
+# .env.local
+
+# --- Project Specific ---
+fixtures/
+yago_test_log.txt
+loaders/
+compatibility/
+
+# --- Vital Build Assets (DO NOT IGNORE) ---
+!resources/
+!src-ui-rs/assets/
+.env
+
+
+# AI Tools
+.last_audit_hash
+.geminiignore
+GEMINI.md
+.aider*
+.claude*
+AGENTS.md

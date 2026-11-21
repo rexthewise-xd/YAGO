@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=YAGO
+Comment=High-performance game mod manager for 3DMigoto-compatible games
+Exec=yago %u
+Icon=io.github.rexthewise_xd.YAGO
+Terminal=false
+Type=Application
+Categories=Game;Utility;
+MimeType=x-scheme-handler/yago;
+StartupWMClass=yago-ui

@@ -1,0 +1,23 @@
+mod add_game;
+mod game_settings;
+mod import_staging;
+mod install_wizard;
+mod loadouts;
+mod mod_inspector;
+mod mods;
+mod overview;
+mod settings;
+mod setup_wizard;
+pub mod skins;
+pub mod cover_manager;
+
+pub use add_game::AddGameModal;
+pub use cover_manager::CoverManagerModal;
+pub use game_settings::GameSettingsDrawer;
+pub use install_wizard::InstallWizard;
+pub use loadouts::LoadoutsView;
+pub use mods::ModsView;
+pub use overview::Overview;
+pub use settings::SettingsView;
+pub use setup_wizard::SetupWizard;
+pub use skins::SkinsView;

@@ -1,0 +1,10 @@
+[application]
+name = "YAGO"
+default_platform = "desktop"
+asset_dir = "assets"
+out_dir = "dist"
+
+[bundle]
+identifier = "dev.yago.launcher"
+publisher = "YAGO"
+icon = ["assets/icons/icon.png"]
