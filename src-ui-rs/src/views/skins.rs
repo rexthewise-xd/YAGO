@@ -417,7 +417,7 @@ fn CycleSkinRow(
 
             button {
                 class: "icon-btn icon-danger cycle-delete",
-                title: "Uninstall",
+                title: "Move to Trash",
                 onclick: {
                     let store = store.clone();
                     let sid = skin.id.clone();
@@ -425,7 +425,9 @@ fn CycleSkinRow(
                         let core = store.core.clone();
                         let sid = sid.clone();
                         let s = store.clone();
-                        s.call(async move { core.delete_mod(sid).await }, |s, _| s.toast(ToastKind::Success, "Mod uninstalled"));
+                        s.call(async move { core.delete_mod(sid).await }, |s, _| {
+                            s.toast(ToastKind::Success, "Mod moved to Recycle Bin / Trash")
+                        });
                     }
                 },
                 IconSvg { name: IconName::Trash, size: 16 }

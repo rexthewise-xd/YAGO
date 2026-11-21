@@ -421,8 +421,8 @@ pub fn ModInspector(
             if (confirm_delete)() {
                 Confirm {
                     title: "Delete Mod".to_string(),
-                    message: format!("Uninstall \"{confirm_name}\"? This removes its files from disk."),
-                    confirm_label: "Uninstall".to_string(),
+                    message: format!("Move \"{confirm_name}\" to Recycle Bin / Trash? (Non-destructive)"),
+                    confirm_label: "Move to Trash".to_string(),
                     danger: true,
                     onconfirm: move |_| {
                         let core = confirm_store.core.clone();
@@ -430,7 +430,7 @@ pub fn ModInspector(
                         confirm_store.call(
                             async move { core.delete_mod(mid).await },
                             move |s, _| {
-                                s.toast(ToastKind::Success, "Mod uninstalled");
+                                s.toast(ToastKind::Success, "Mod moved to Recycle Bin / Trash");
                             },
                         );
                         selected_mod.set(None);

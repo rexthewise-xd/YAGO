@@ -19,11 +19,11 @@ dirs = "6.0"
 sync = { path = "../sync" }
 ini = { path = "../ini" }
 tempfile = "3.13"
+zip = { version = "2.2.2", features = ["deflate"] }
 
 [dev-dependencies]
 insta = { version = "1.46.3", features = ["redactions", "yaml"] }
 tempfile = "3.13"
-zip = { version = "2.2.2", features = ["deflate"] }
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"

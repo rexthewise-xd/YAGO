@@ -2,7 +2,6 @@ use crate::error::Result;
 use ini::ast::{IniDocument, IniItem};
 use regex::Regex;
 use std::collections::HashMap;
-use std::path::Path;
 
 pub struct Namespacer;
 
@@ -257,22 +256,7 @@ impl Namespacer {
                         }
 
                         // 3. Normalize slashes to single backslash
-                        let mut normalized_val = clean_value.replace('/', "\\");
-
-                        // 3.5 Prioritize transcoded DDS version if original was non-DDS image
-                        let val_lower = normalized_val.to_lowercase();
-                        if matches!(
-                            Path::new(&val_lower)
-                                .extension()
-                                .and_then(|s| s.to_str())
-                                .unwrap_or(""),
-                            "png" | "jpg" | "jpeg" | "tga" | "webp"
-                        ) {
-                            normalized_val = Path::new(&normalized_val)
-                                .with_extension("dds")
-                                .to_string_lossy()
-                                .to_string();
-                        }
+                        let normalized_val = clean_value.replace('/', "\\");
 
                         // 4. Prepend prefix if not already present
                         if !normalized_val
@@ -288,5 +272,55 @@ impl Namespacer {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ini::parser::parse_ini;
+
+    #[test]
+    fn test_rewrite_paths_preserves_image_extension() {
+        let content = r#"
+[TextureOverrideBody]
+hash = 12345678
+ps-t0 = ResourceDiffuse
+
+[ResourceDiffuse]
+filename = textures/diffuse.png
+"#;
+        let (_, mut doc) = parse_ini(content).unwrap();
+        Namespacer::rewrite_paths(&mut doc, "22_Characters/Keqing/Skin_0").unwrap();
+
+        let res_sec = doc
+            .sections
+            .iter()
+            .find(|s| s.name == "ResourceDiffuse")
+            .unwrap();
+        let filename_item = res_sec
+            .items
+            .iter()
+            .find_map(|item| {
+                if let IniItem::Pair { key, value } = item {
+                    if key.eq_ignore_ascii_case("filename") {
+                        Some(value)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .unwrap();
+
+        assert_eq!(
+            filename_item,
+            "22_Characters\\Keqing\\Skin_0\\textures\\diffuse.png"
+        );
+        assert!(
+            !filename_item.ends_with(".dds"),
+            "Must preserve .png and not rewrite to .dds"
+        );
     }
 }

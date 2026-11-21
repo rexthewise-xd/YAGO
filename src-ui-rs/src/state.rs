@@ -251,7 +251,13 @@ impl Store {
             }
             AppEvent::SettingsUpdated(s) => self.settings.set(s),
             AppEvent::AppConfigUpdated(c) => self.app_config.set(c),
-            AppEvent::PanicTriggered => self.panic.set(true),
+            AppEvent::PanicTriggered => {
+                self.panic.set(true);
+                self.toast(
+                    ToastKind::Success,
+                    "Panic Triggered: Active mods purged and reload (F10) sent.",
+                );
+            }
             AppEvent::LoaderProgress(p) => {
                 self.loader_progress.write().insert(p.game_id.clone(), p);
             }

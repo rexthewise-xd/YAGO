@@ -22,3 +22,7 @@ tempfile = "3.13"
 [dev-dependencies]
 insta = { version = "1.46.3", features = ["redactions", "yaml"] }
 
+[target.'cfg(windows)'.dependencies]
+junction = "1"
+
+

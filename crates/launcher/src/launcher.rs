@@ -409,7 +409,7 @@ impl Launcher {
             if !matches!(options.runner.runner_type, RunnerType::Native) {
                 match options.injection_method {
                     InjectionMethod::Proxy | InjectionMethod::Loader => {
-                        cmd.env("WINEDLLOVERRIDES", "d3d11,dxgi=n,b");
+                        cmd.env("WINEDLLOVERRIDES", "d3d11,dxgi,d3dcompiler_47=n,b");
                     }
                     _ => {}
                 }

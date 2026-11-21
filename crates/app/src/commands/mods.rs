@@ -85,7 +85,8 @@ impl AppCore {
                     .unwrap_or_default()
                     .to_string_lossy()
                     .to_string();
-                let bytes = std::fs::read(path).map_err(|e| format!("Failed to read {}: {}", file_name, e))?;
+                let bytes = std::fs::read(path)
+                    .map_err(|e| format!("Failed to read {}: {}", file_name, e))?;
                 let content = String::from_utf8_lossy(&bytes);
                 let doc = match ini::parser::parse_ini(&content) {
                     Ok((_, doc)) => doc,
@@ -111,10 +112,14 @@ impl AppCore {
         let mut dbs = self.game_dbs.lock().await;
 
         for (game_id, db) in dbs.iter_mut() {
-            if let Some(record) = db.mods.remove(&mod_uuid) {
+            if let Some(record) = db.mods.get(&mod_uuid) {
                 if record.path.exists() {
-                    let _ = std::fs::remove_dir_all(&record.path);
+                    vfs::Safety::move_to_trash(&record.path).map_err(|e| {
+                        format!("Failed to move mod '{}' to trash: {}", record.meta.name, e)
+                    })?;
                 }
+
+                let _ = db.mods.remove(&mod_uuid);
 
                 for profile in db.profiles.values_mut() {
                     profile.enabled_mod_ids.retain(|id| *id != mod_uuid);
@@ -294,5 +299,72 @@ fn format_size(bytes: u64) -> String {
         format!("{:.1} KB", bytes as f64 / 1024.0)
     } else {
         format!("{} B", bytes)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::init::init_with_dir;
+    use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn test_delete_mod_moves_to_trash_and_updates_db() {
+        let dir = tempdir().unwrap();
+        let core = init_with_dir(dir.path().to_path_buf()).await.unwrap();
+
+        let game_id = "genshin".to_string();
+        let mod_uuid = Uuid::new_v4();
+        let mod_dir = dir.path().join("test_mod");
+        std::fs::create_dir_all(&mod_dir).unwrap();
+        std::fs::write(mod_dir.join("mod.ini"), "test").unwrap();
+
+        let record = ModRecord {
+            id: mod_uuid,
+            owner_game_id: game_id.clone(),
+            path: mod_dir.clone(),
+            size: "0".to_string(),
+            meta: storage::models::ModMetadata {
+                name: "Test Mod".to_string(),
+                version: "1.0".to_string(),
+                author: "Author".to_string(),
+                url: None,
+                preview_image: None,
+                description: None,
+            },
+            compatibility: storage::models::ModCompatibility {
+                game: "genshin".to_string(),
+                character: "Keqing".to_string(),
+                hashes: vec![],
+                fingerprint: "".to_string(),
+            },
+            config: storage::models::ModConfig {
+                mod_type: Some("character".to_string()),
+                tags: vec![],
+                keybinds: std::collections::HashMap::new(),
+            },
+            enabled: true,
+            added_at: chrono::Utc::now(),
+        };
+
+        {
+            let mut dbs = core.game_dbs.lock().await;
+            let mut db = storage::LibraryDatabase::default();
+            db.mods.insert(mod_uuid, record);
+            dbs.insert(game_id.clone(), db);
+        }
+
+        let res = core.delete_mod(mod_uuid.to_string()).await;
+        if res.is_ok() {
+            let dbs = core.game_dbs.lock().await;
+            assert!(!dbs.get(&game_id).unwrap().mods.contains_key(&mod_uuid));
+            assert!(!mod_dir.exists(), "Mod directory should be moved to trash");
+        } else {
+            let dbs = core.game_dbs.lock().await;
+            assert!(
+                dbs.get(&game_id).unwrap().mods.contains_key(&mod_uuid),
+                "Mod should stay in db if trash fails"
+            );
+        }
     }
 }

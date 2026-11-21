@@ -84,8 +84,12 @@ pub fn execute_deployment(
     if !force && lock_file.exists() {
         if let Ok(last_hash) = std::fs::read_to_string(&lock_file) {
             if last_hash == plan.state_hash {
-                // If merged.ini doesn't exist, we must re-deploy anyway as it's the core
-                if mods_dir.join("merged.ini").exists() {
+                let all_generated_exist = plan
+                    .generated_files
+                    .iter()
+                    .all(|(rel_path, _)| mods_dir.join(rel_path).exists());
+
+                if all_generated_exist {
                     println!("Deployment state matches. Skipping VFS rebuild.");
                     return Ok(());
                 }
@@ -197,32 +201,107 @@ pub fn make_symlink(original: &std::path::Path, link: &std::path::Path) -> Resul
 
 #[cfg(windows)]
 pub fn make_symlink(original: &std::path::Path, link: &std::path::Path) -> Result<()> {
-    // On Windows, we prefer directory junctions for folders as they don't require Admin privileges usually
-    if link.exists() {
-        if link.is_dir() {
+    // If link already exists as a junction/symlink or directory, remove it safely first.
+    if let Ok(meta) = link.symlink_metadata() {
+        if meta.file_type().is_symlink() || junction::exists(link).unwrap_or(false) {
+            let _ = junction::delete(link)
+                .or_else(|_| std::fs::remove_dir(link))
+                .or_else(|_| std::fs::remove_file(link));
+        } else if meta.is_dir() {
             let _ = std::fs::remove_dir_all(link);
         } else {
             let _ = std::fs::remove_file(link);
         }
     }
 
+    if let Some(parent) = link.parent() {
+        if !parent.exists() {
+            std::fs::create_dir_all(parent).map_err(FsError::Io)?;
+        }
+    }
+
     if original.is_dir() {
-        std::os::windows::fs::symlink_dir(original, link).map_err(|e| {
-            if e.raw_os_error() == Some(1314) {
-                FsError::Symlink("Required privilege not held. Please enable Developer Mode in Windows Settings.".to_string())
-            } else {
-                FsError::Io(e)
-            }
-        })?;
+        if let Err(_e) = junction::create(original, link) {
+            Safety::copy_recursive_sync(original, link)?;
+        }
     } else {
-        std::os::windows::fs::symlink_file(original, link).map_err(|e| {
-            if e.raw_os_error() == Some(1314) {
-                FsError::Symlink("Required privilege not held. Please enable Developer Mode in Windows Settings.".to_string())
-            } else {
-                FsError::Io(e)
-            }
-        })?;
+        if let Err(_e) = std::os::windows::fs::symlink_file(original, link) {
+            std::fs::copy(original, link).map_err(FsError::Io)?;
+        }
     }
     Ok(())
 }
 mod snapshots_test;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_execute_deployment_cache_hit_and_miss() {
+        let dir = tempdir().unwrap();
+        let target_root = dir.path().to_path_buf();
+
+        let source_dir = dir.path().join("source_mod");
+        std::fs::create_dir_all(&source_dir).unwrap();
+        std::fs::write(source_dir.join("texture.dds"), b"dds").unwrap();
+
+        let merged_rel_path = PathBuf::from("22_Characters/Keqing/merged.ini");
+        let plan = DeploymentPlan {
+            symlink_map: vec![(
+                source_dir.clone(),
+                PathBuf::from("22_Characters/Keqing/Skin_0"),
+            )],
+            generated_files: vec![(
+                merged_rel_path.clone(),
+                "[KeyCycleKeqing]\nkey = ]\n".to_string(),
+            )],
+            state_hash: "hash_12345".to_string(),
+        };
+
+        // 1. Initial deployment
+        execute_deployment(&target_root, &plan, Some("Mods"), false)
+            .expect("Initial deployment must succeed");
+
+        let mods_dir = target_root.join("Mods");
+        let lock_file = mods_dir.join("deployment.lock");
+        let merged_file = mods_dir.join(&merged_rel_path);
+
+        assert!(lock_file.exists());
+        assert!(merged_file.exists());
+        assert_eq!(std::fs::read_to_string(&lock_file).unwrap(), "hash_12345");
+
+        // 2. Cache Hit: call execute_deployment again with force = false
+        // Write a canary file into the managed domain
+        let canary_file = mods_dir.join("22_Characters/Keqing/canary.txt");
+        std::fs::write(&canary_file, "canary").unwrap();
+
+        execute_deployment(&target_root, &plan, Some("Mods"), false)
+            .expect("Cache-hit deployment must succeed");
+
+        // Because it was a cache hit, the managed domain wasn't wiped, so canary_file still exists!
+        assert!(
+            canary_file.exists(),
+            "Canary file should still exist on cache hit (rebuild skipped)"
+        );
+
+        // 3. Cache Miss: delete the generated file (22_Characters/Keqing/merged.ini)
+        std::fs::remove_file(&merged_file).unwrap();
+        assert!(!merged_file.exists());
+
+        execute_deployment(&target_root, &plan, Some("Mods"), false)
+            .expect("Cache-miss deployment must succeed");
+
+        // Now merged_file was regenerated!
+        assert!(
+            merged_file.exists(),
+            "Generated file must be recreated on cache miss"
+        );
+        // And managed domain was wiped and rebuilt, so canary_file is gone!
+        assert!(
+            !canary_file.exists(),
+            "Canary file should be gone because cache-miss triggered rebuild"
+        );
+    }
+}

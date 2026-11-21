@@ -44,7 +44,7 @@ impl Default for AppConfig {
                 "https://picsum.photos/seed/wuwa-landscape/1920/1080".to_string(),
                 "https://picsum.photos/seed/fantasy-landscape/1920/1080".to_string(),
             ],
-            yago_update_url: "https://api.github.com/repos/your-org/yago/releases/latest".to_string(),
+            yago_update_url: "https://api.github.com/repos/rexthewise-xd/yago/releases/latest".to_string(),
             theme: "linear".to_string(),
         }
     }

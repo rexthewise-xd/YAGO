@@ -707,10 +707,38 @@ option:hover {
 
 /* ---- mod manager ---- */
 .mods-view {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100%;
   overflow: hidden;
+}
+.mods-view.drag-over {
+  outline: 2px dashed var(--accent);
+  outline-offset: -2px;
+}
+.mods-view.drag-over * {
+  pointer-events: none;
+}
+.mods-dropzone-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(10, 10, 14, 0.88);
+  border: 2px dashed var(--accent);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  z-index: 100;
+  pointer-events: none;
+  backdrop-filter: blur(4px);
+}
+.mods-dropzone-overlay p {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--text);
+  letter-spacing: 1px;
 }
 .mods-header {
   display: flex;

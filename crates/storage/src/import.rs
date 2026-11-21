@@ -5,14 +5,13 @@ use crate::models::{
 };
 use crate::Librarian;
 use chrono::Utc;
-use vfs::{extract_and_sanitize, is_allowed, ExtractionReport};
 use ini::IniCompiler;
 use std::collections::HashMap;
 use std::io;
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use uuid::Uuid;
+use vfs::{extract_and_sanitize, is_allowed, ExtractionReport};
 
 pub struct Importer;
 
@@ -175,24 +174,48 @@ impl Importer {
                     // Alchemy: Peek into archive to identify character
                     let mut identified_character = None;
                     if let Ok(temp_dir) = tempfile::tempdir() {
-                        // Just extract the first .ini we can find to save time
-                        let _ = Command::new("7z")
-                            .arg("e")
-                            .arg(&path)
-                            .arg("-o")
-                            .arg(temp_dir.path())
-                            .arg("*.ini")
-                            .arg("-r")
-                            .arg("-y")
-                            .output();
+                        let peek_success = match ext.as_deref() {
+                            Some("zip") => {
+                                if let Ok(file) = std::fs::File::open(&path) {
+                                    if let Ok(mut archive) = zip::ZipArchive::new(file) {
+                                        for i in 0..archive.len() {
+                                            if let Ok(mut zfile) = archive.by_index(i) {
+                                                let name = zfile.name().to_string();
+                                                if name.to_lowercase().ends_with(".ini") {
+                                                    let out_name = Path::new(&name)
+                                                        .file_name()
+                                                        .unwrap_or(std::ffi::OsStr::new("mod.ini"));
+                                                    let out_path = temp_dir.path().join(out_name);
+                                                    if let Ok(mut outfile) =
+                                                        std::fs::File::create(&out_path)
+                                                    {
+                                                        let _ =
+                                                            std::io::copy(&mut zfile, &mut outfile);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        true
+                                    } else {
+                                        false
+                                    }
+                                } else {
+                                    false
+                                }
+                            }
+                            Some("7z") => vfs::extract_raw_archive(&path, temp_dir.path()).is_ok(),
+                            _ => false,
+                        };
 
-                        let (character, _, _) = Self::identify_character_and_type(
-                            temp_dir.path(),
-                            assets_root,
-                            game_id,
-                        );
-                        if character != "Unknown" {
-                            identified_character = Some(character);
+                        if peek_success {
+                            let (character, _, _) = Self::identify_character_and_type(
+                                temp_dir.path(),
+                                assets_root,
+                                game_id,
+                            );
+                            if character != "Unknown" {
+                                identified_character = Some(character);
+                            }
                         }
                     }
 
@@ -330,8 +353,7 @@ impl Importer {
 
         vfs::Safety::atomic_import(&staging_dir, &target_path).await?;
 
-        // 1. Transcode non-DDS assets to DDS for bit-perfect compatibility on Linux/Proton
-        // 2. Cloak INI files to prevent double-loading by 3dmigoto
+        // 1. Cloak INI files to prevent double-loading by 3dmigoto
         let walker = walkdir::WalkDir::new(&target_path).max_depth(4);
         for entry in walker.into_iter().filter_map(|e| e.ok()) {
             let path = entry.path();
@@ -345,13 +367,6 @@ impl Importer {
                         );
                         let new_path = path.with_file_name(new_name);
                         let _ = std::fs::rename(path, new_path);
-                    } else if matches!(ext_lower.as_str(), "png" | "jpg" | "jpeg" | "tga" | "webp")
-                    {
-                        // Attempt to transcode to DDS
-                        if let Ok(Some(_)) = vfs::Transcoder::to_dds(path) {
-                            // If successful, we can optionally delete the original?
-                            // For now, keep both, but the Namespacer will prioritize the .dds
-                        }
                     }
                 }
             }
@@ -801,5 +816,37 @@ impl Importer {
             preview_image: None,
             description: Some(format!("Generated from {}", filename)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::tempdir;
+    use zip::write::SimpleFileOptions;
+
+    #[test]
+    fn test_scan_directory_with_bundled_zip() {
+        let dir = tempdir().unwrap();
+        let assets_dir = tempdir().unwrap();
+        let target_dir = dir.path().join("mods_incoming");
+        std::fs::create_dir_all(&target_dir).unwrap();
+
+        let zip_path = target_dir.join("TestSkin.zip");
+        let file = std::fs::File::create(&zip_path).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        let options =
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        zip.start_file("TestSkin/mod.ini", options).unwrap();
+        zip.write_all(b"[TextureOverrideTest]\nhash = deadbeef\n")
+            .unwrap();
+        zip.finish().unwrap();
+
+        let candidates =
+            Importer::scan_directory(&target_dir, assets_dir.path(), "genshin").unwrap();
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].suggested_name, "TestSkin");
+        assert_eq!(candidates[0].detected_topology, "Archive");
     }
 }

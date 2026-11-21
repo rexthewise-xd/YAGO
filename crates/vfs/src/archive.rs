@@ -227,11 +227,7 @@ pub fn is_allowed(filename: &str) -> bool {
     }
 
     // Explicit Allow List (Exact matches)
-    if name == "mod.json" || name == "modinfo.json" {
-        return true;
-    }
-
-    false
+    name == "mod.json" || name == "modinfo.json"
 }
 
 #[doc(hidden)]

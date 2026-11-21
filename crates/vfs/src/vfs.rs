@@ -2,11 +2,6 @@ use crate::error::{FsError, Result};
 use std::path::Path;
 use tokio::fs;
 
-#[cfg(unix)]
-// use std::os::unix::fs::symlink as symlink_dir; // Removed unused import
-#[cfg(windows)]
-use std::os::windows::fs::symlink_dir;
-
 pub struct Vfs;
 
 impl Vfs {
@@ -24,12 +19,20 @@ impl Vfs {
             // If target exists, checks if it's a symlink. If so, remove it.
             // If it's a real directory, return error (safety).
             let metadata = fs::symlink_metadata(target).await?;
-            if metadata.file_type().is_symlink() {
-                // Remove existing symlink
+            #[cfg(unix)]
+            let is_link = metadata.file_type().is_symlink();
+            #[cfg(windows)]
+            let is_link =
+                metadata.file_type().is_symlink() || junction::exists(target).unwrap_or(false);
+
+            if is_link {
+                // Remove existing symlink or junction
                 #[cfg(unix)]
                 fs::remove_file(target).await?;
                 #[cfg(windows)]
-                fs::remove_dir(target).await?; // Windows symlinks to dirs are removed with remove_dir
+                let _ = junction::delete(target)
+                    .or_else(|_| std::fs::remove_dir(target))
+                    .or_else(|_| std::fs::remove_file(target));
             } else {
                 return Err(FsError::DirectoryNotEmpty(target.to_path_buf()));
             }
@@ -55,7 +58,9 @@ impl Vfs {
                 std::os::unix::fs::symlink(&canonical_source, target)?;
 
                 #[cfg(windows)]
-                std::os::windows::fs::symlink_dir(&canonical_source, target)?;
+                if let Err(_) = junction::create(&canonical_source, target) {
+                    crate::Safety::copy_recursive_sync(&canonical_source, target)?;
+                }
 
                 Ok(())
             }
@@ -70,11 +75,19 @@ impl Vfs {
         }
 
         let metadata = fs::symlink_metadata(target).await?;
-        if metadata.file_type().is_symlink() {
+        #[cfg(unix)]
+        let is_link = metadata.file_type().is_symlink();
+        #[cfg(windows)]
+        let is_link =
+            metadata.file_type().is_symlink() || junction::exists(target).unwrap_or(false);
+
+        if is_link {
             #[cfg(unix)]
             fs::remove_file(target).await?;
             #[cfg(windows)]
-            fs::remove_dir(target).await?;
+            let _ = junction::delete(target)
+                .or_else(|_| std::fs::remove_dir(target))
+                .or_else(|_| std::fs::remove_file(target));
             Ok(())
         } else {
             Err(FsError::InvalidPath(target.to_path_buf())) // Not a symlink, refuse to delete
@@ -102,12 +115,20 @@ impl Vfs {
             {
                 let path = entry.path();
                 if let Ok(metadata) = std::fs::symlink_metadata(path) {
-                    if metadata.file_type().is_symlink() {
-                        // It's a symlink, destroy it.
+                    #[cfg(unix)]
+                    let is_link = metadata.file_type().is_symlink();
+                    #[cfg(windows)]
+                    let is_link = metadata.file_type().is_symlink()
+                        || junction::exists(path).unwrap_or(false);
+
+                    if is_link {
+                        // It's a symlink or junction, destroy it.
                         #[cfg(unix)]
                         let _ = std::fs::remove_file(path);
                         #[cfg(windows)]
-                        let _ = std::fs::remove_dir(path).or_else(|_| std::fs::remove_file(path));
+                        let _ = junction::delete(path)
+                            .or_else(|_| std::fs::remove_dir(path))
+                            .or_else(|_| std::fs::remove_file(path));
                     }
                 }
             }

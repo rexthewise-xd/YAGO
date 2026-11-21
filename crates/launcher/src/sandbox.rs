@@ -105,7 +105,7 @@ impl SandboxManager {
                 };
 
                 let status = Command::new(&wine_bin)
-                    .env("WINEPREFIX", prefix_path)
+                    .env("WINEPREFIX", prefix_path.join("pfx"))
                     .args(["regedit", "/s", reg_file.to_str().unwrap_or_default()])
                     .status()
                     .map_err(MarshalError::Io)?;
@@ -120,14 +120,64 @@ impl SandboxManager {
         Ok(())
     }
 
+    /// Merges multiple .reg export parts into a single valid .reg document.
+    /// Preserves the Windows Registry Editor Version 5.00 header from the first part
+    /// and strips duplicate headers from subsequent parts.
+    pub fn merge_reg_parts(parts: &[&str]) -> String {
+        if parts.is_empty() {
+            return String::new();
+        }
+
+        let mut result = String::new();
+
+        for (i, part) in parts.iter().enumerate() {
+            let trimmed = part.trim_start_matches('\u{feff}');
+            if i == 0 {
+                let content = trimmed.trim_end();
+                if !content.is_empty() {
+                    result.push_str(content);
+                    result.push_str("\r\n\r\n");
+                }
+            } else {
+                let mut skipping_header = true;
+                let mut part_lines = Vec::new();
+
+                for line in trimmed.lines() {
+                    let trimmed_line = line.trim();
+                    if skipping_header {
+                        if trimmed_line.eq_ignore_ascii_case("Windows Registry Editor Version 5.00")
+                            || trimmed_line.is_empty()
+                        {
+                            continue;
+                        }
+                        skipping_header = false;
+                    }
+                    part_lines.push(line);
+                }
+
+                if !part_lines.is_empty() {
+                    result.push_str(&part_lines.join("\r\n"));
+                    result.push_str("\r\n\r\n");
+                }
+            }
+        }
+
+        let trimmed = result.trim_end();
+        if trimmed.is_empty() {
+            String::new()
+        } else {
+            format!("{}\r\n", trimmed)
+        }
+    }
+
     fn export_registry(
         reg_file: &Path,
         keys: &[String],
         runner: &RunnerConfig,
         prefix_path: &Path,
     ) -> Result<()> {
-        // regedit /e only exports one key at a time usually, or we can use reg export
-        // For simplicity and compatibility, we'll use 'reg export' if available or 'regedit /e'
+        let mut temp_files = Vec::new();
+        let mut part_contents = Vec::new();
 
         for (i, key) in keys.iter().enumerate() {
             let temp_reg = reg_file.with_extension(format!("part{}.reg", i));
@@ -150,27 +200,76 @@ impl SandboxManager {
                     };
 
                     Command::new(&wine_bin)
-                        .env("WINEPREFIX", prefix_path)
+                        .env("WINEPREFIX", prefix_path.join("pfx"))
                         .args(["regedit", "/e", temp_reg.to_str().unwrap_or_default(), key])
                         .status()
                         .map_err(MarshalError::Io)?;
                 }
             }
 
-            // Append to main file (simplified logic: just overwrite with last key for MVP,
-            // or concatenate if we want true multi-key support).
-            // GI/HSR usually only have ONE main key.
-            if i == 0 {
-                if temp_reg.exists() {
-                    fs::copy(&temp_reg, reg_file).map_err(MarshalError::Io)?;
-                }
-            } else {
-                // TODO: Proper multi-key registry merging
-            }
             if temp_reg.exists() {
-                let _ = fs::remove_file(temp_reg);
+                // Read content, supporting UTF-8 and UTF-16LE fallback
+                let content = fs::read_to_string(&temp_reg).or_else(|_| {
+                    let bytes = fs::read(&temp_reg)?;
+                    if bytes.len() >= 2 && bytes.len() % 2 == 0 {
+                        let u16s: Vec<u16> = bytes
+                            .as_chunks::<2>()
+                            .0
+                            .iter()
+                            .map(|&[b0, b1]| u16::from_le_bytes([b0, b1]))
+                            .collect();
+                        String::from_utf16(&u16s)
+                            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+                    } else {
+                        Err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "Invalid registry encoding",
+                        ))
+                    }
+                });
+
+                if let Ok(c) = content {
+                    part_contents.push(c);
+                }
+                temp_files.push(temp_reg);
             }
         }
+
+        let part_refs: Vec<&str> = part_contents.iter().map(|s| s.as_str()).collect();
+        let merged = Self::merge_reg_parts(&part_refs);
+        fs::write(reg_file, merged.as_bytes()).map_err(MarshalError::Io)?;
+
+        for temp_reg in temp_files {
+            let _ = fs::remove_file(temp_reg);
+        }
+
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_merge_reg_parts_multi_key() {
+        let part1 = "Windows Registry Editor Version 5.00\r\n\r\n[HKEY_CURRENT_USER\\Software\\miHoYo\\Genshin Impact]\r\n\"GraphicsQuality\"=dword:00000003\r\n";
+        let part2 = "Windows Registry Editor Version 5.00\r\n\r\n[HKEY_CURRENT_USER\\Software\\miHoYo\\Common]\r\n\"UserAgreement\"=dword:00000001\r\n";
+
+        let merged = SandboxManager::merge_reg_parts(&[part1, part2]);
+
+        // Header must appear exactly once
+        assert_eq!(
+            merged
+                .matches("Windows Registry Editor Version 5.00")
+                .count(),
+            1,
+            "Header must appear exactly once"
+        );
+        // Both keys and their values must be present
+        assert!(merged.contains("[HKEY_CURRENT_USER\\Software\\miHoYo\\Genshin Impact]"));
+        assert!(merged.contains("\"GraphicsQuality\"=dword:00000003"));
+        assert!(merged.contains("[HKEY_CURRENT_USER\\Software\\miHoYo\\Common]"));
+        assert!(merged.contains("\"UserAgreement\"=dword:00000001"));
     }
 }

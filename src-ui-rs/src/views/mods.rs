@@ -1,3 +1,4 @@
+use dioxus::html::HasFileData;
 use dioxus::prelude::*;
 use storage::models::{ImportCandidate, ModRecord};
 use uuid::Uuid;
@@ -29,6 +30,7 @@ pub fn ModsView() -> Element {
     let mut redeploying = use_signal(|| false);
     let mut staging = use_signal(|| None::<Vec<ImportCandidate>>);
     let mut confirm_delete = use_signal(|| None::<(String, String)>);
+    let mut is_dragging_over = use_signal(|| false);
 
     let Some(game) = store.selected_game() else {
         return rsx! {
@@ -84,11 +86,14 @@ pub fn ModsView() -> Element {
         .collect();
 
     if by_name {
-        list.sort_by(|a, b| a.0.meta.name.to_lowercase().cmp(&b.0.meta.name.to_lowercase()));
-    } else {
-        list.sort_by_key(|(m, _)| {
-            load_order.iter().position(|id| *id == m.id).unwrap_or(9999)
+        list.sort_by(|a, b| {
+            a.0.meta
+                .name
+                .to_lowercase()
+                .cmp(&b.0.meta.name.to_lowercase())
         });
+    } else {
+        list.sort_by_key(|(m, _)| load_order.iter().position(|id| *id == m.id).unwrap_or(9999));
     }
 
     let mod_count = list.len();
@@ -98,13 +103,89 @@ pub fn ModsView() -> Element {
 
     let mut char_counts = std::collections::HashMap::<String, usize>::new();
     for (m, en) in list.iter() {
-        if *en && m.compatibility.character != "Unknown" && m.compatibility.character != "Global/Other" {
-            *char_counts.entry(m.compatibility.character.clone()).or_insert(0) += 1;
+        if *en
+            && m.compatibility.character != "Unknown"
+            && m.compatibility.character != "Global/Other"
+        {
+            *char_counts
+                .entry(m.compatibility.character.clone())
+                .or_insert(0) += 1;
         }
     }
 
     rsx! {
-        div { class: "mods-view",
+        div {
+            class: if (is_dragging_over)() { "mods-view drag-over" } else { "mods-view" },
+            ondragover: move |evt| {
+                evt.prevent_default();
+                is_dragging_over.set(true);
+            },
+            ondragenter: move |evt| {
+                evt.prevent_default();
+                is_dragging_over.set(true);
+            },
+            ondragleave: move |_| {
+                is_dragging_over.set(false);
+            },
+            ondrop: {
+                let store = store.clone();
+                let gid = game_id.clone();
+                move |evt| {
+                    evt.prevent_default();
+                    is_dragging_over.set(false);
+                    let files = evt.files();
+                    if files.is_empty() {
+                        return;
+                    }
+                    let core = store.core.clone();
+                    let gid = gid.clone();
+                    let mut s = store.clone();
+                    spawn(async move {
+                        importing.set(true);
+                        let mut ok_count = 0usize;
+                        let mut last_error = None;
+
+                        for file in files {
+                            let path = file.path();
+                            let is_archive = path
+                                .extension()
+                                .and_then(|ext| ext.to_str())
+                                .map(|ext| {
+                                    let ext_lower = ext.to_lowercase();
+                                    ext_lower == "zip" || ext_lower == "7z"
+                                })
+                                .unwrap_or(false);
+                            let is_dir = path.is_dir();
+
+                            if is_archive || is_dir {
+                                match core
+                                    .import_mod(gid.clone(), path.to_string_lossy().to_string())
+                                    .await
+                                {
+                                    Ok(_) => ok_count += 1,
+                                    Err(e) => {
+                                        eprintln!("Import failed for {:?}: {}", path, e);
+                                        last_error = Some(e);
+                                    }
+                                }
+                            }
+                        }
+
+                        if ok_count > 0 {
+                            s.toast(ToastKind::Success, format!("{ok_count} mod(s) imported"));
+                        } else if let Some(err) = last_error {
+                            s.toast(ToastKind::Error, err);
+                        }
+                        importing.set(false);
+                    });
+                }
+            },
+            if (is_dragging_over)() {
+                div { class: "mods-dropzone-overlay",
+                    IconSvg { name: IconName::Folder, size: 48 }
+                    p { "Drop mod archive (.zip, .7z) or folder to import" }
+                }
+            }
             div { class: "mods-header",
                 div { class: "mods-title",
                     IconSvg { name: IconName::Mods, size: 20 }
@@ -387,8 +468,8 @@ pub fn ModsView() -> Element {
             if let Some((del_id, del_name)) = delete_snapshot {
                 Confirm {
                     title: "Delete Mod".to_string(),
-                    message: format!("Uninstall \"{del_name}\"? This removes its files from disk."),
-                    confirm_label: "Uninstall".to_string(),
+                    message: format!("Move \"{del_name}\" to Recycle Bin / Trash? (Non-destructive)"),
+                    confirm_label: "Move to Trash".to_string(),
                     danger: true,
                     onconfirm: {
                         let store = store.clone();
@@ -398,7 +479,7 @@ pub fn ModsView() -> Element {
                             let s = store.clone();
                             s.call(
                                 async move { core.delete_mod(mid).await },
-                                |s, _| s.toast(ToastKind::Success, "Mod uninstalled"),
+                                |s, _| s.toast(ToastKind::Success, "Mod moved to Recycle Bin / Trash"),
                             );
                             confirm_delete.set(None);
                         }
@@ -412,15 +493,27 @@ pub fn ModsView() -> Element {
 
 fn do_move_mod(store: Store, game_id: String, mod_id: String, dir: MoveDir) {
     let Some(db) = store.db(&game_id) else { return };
-    let Some(game) = store.game(&game_id) else { return };
-    let Some(profile) = active_profile(&db, &game) else { return };
+    let Some(game) = store.game(&game_id) else {
+        return;
+    };
+    let Some(profile) = active_profile(&db, &game) else {
+        return;
+    };
     let mut order = profile.load_order.clone();
-    let Some(uid) = Uuid::parse_str(&mod_id).ok() else { return };
-    let Some(idx) = order.iter().position(|id| *id == uid) else { return };
+    let Some(uid) = Uuid::parse_str(&mod_id).ok() else {
+        return;
+    };
+    let Some(idx) = order.iter().position(|id| *id == uid) else {
+        return;
+    };
 
     match dir {
-        MoveDir::Up if idx > 0 => { order.swap(idx, idx - 1); }
-        MoveDir::Down if idx < order.len() - 1 => { order.swap(idx, idx + 1); }
+        MoveDir::Up if idx > 0 => {
+            order.swap(idx, idx - 1);
+        }
+        MoveDir::Down if idx < order.len() - 1 => {
+            order.swap(idx, idx + 1);
+        }
         MoveDir::Top if idx > 0 => {
             let item = order.remove(idx);
             order.insert(0, item);
@@ -434,7 +527,10 @@ fn do_move_mod(store: Store, game_id: String, mod_id: String, dir: MoveDir) {
 
     let core = store.core.clone();
     let s = store.clone();
-    s.call(async move { core.set_load_order(game_id, order).await }, |_, _| {});
+    s.call(
+        async move { core.set_load_order(game_id, order).await },
+        |_, _| {},
+    );
 }
 
 // ─── ModRow ──────────────────────────────────────────────────────
@@ -449,8 +545,7 @@ fn ModRow(
     reorder_enabled: bool,
     dev_mode: bool,
     stream_safe: bool,
-    #[props(default)]
-    has_conflict: bool,
+    #[props(default)] has_conflict: bool,
     onselect: EventHandler<String>,
     ontoggle: EventHandler<(String, bool)>,
     onmove: EventHandler<(String, MoveDir)>,
