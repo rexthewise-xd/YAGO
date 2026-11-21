@@ -1,5 +1,6 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion};
 use ini::parser::parse_ini;
+use std::hint::black_box;
 
 fn bench_parser_standard(c: &mut Criterion) {
     let input = r#"[Section]

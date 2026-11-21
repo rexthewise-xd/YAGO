@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use ini::ast::IniItem;
 
 pub const UNIVERSAL_KEYS: &[&str] = &["6", "7", "8", "9", "0"];

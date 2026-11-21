@@ -1,7 +1,7 @@
 use crate::ast::{IniDocument, IniItem, Section};
 use nom::{
     branch::alt,
-    bytes::complete::{tag, take_until},
+    bytes::complete::{tag, tag_no_case, take_until},
     character::complete::{char, multispace0, not_line_ending, space0},
     combinator::map,
     multi::many0,
@@ -45,13 +45,24 @@ fn parse_pair(input: &str) -> IResult<&str, IniItem> {
         let (key, value) = clean_line.split_at(pos);
         let key = key.trim();
         let value = value[1..].trim(); // skip '='
-        let key_lower = key.to_lowercase();
+        let words: Vec<&str> = key.split_whitespace().collect();
 
-        if key_lower == "run" {
+        if words.len() == 1 && words[0].eq_ignore_ascii_case("run") {
             Ok((
                 input,
                 IniItem::Command {
-                    command: "run".to_string(),
+                    command: words[0].to_string(),
+                    args: vec![value.to_string()],
+                },
+            ))
+        } else if words.len() == 2
+            && (words[0].eq_ignore_ascii_case("pre") || words[0].eq_ignore_ascii_case("post"))
+            && words[1].eq_ignore_ascii_case("run")
+        {
+            Ok((
+                input,
+                IniItem::Command {
+                    command: format!("{} {}", words[0], words[1]),
                     args: vec![value.to_string()],
                 },
             ))
@@ -77,7 +88,13 @@ fn parse_pair(input: &str) -> IResult<&str, IniItem> {
 }
 
 fn parse_command(input: &str) -> IResult<&str, IniItem> {
-    let (input, cmd) = alt((tag("endif"), tag("if"), tag("else")))(input)?;
+    let (input, cmd) = alt((
+        tag_no_case("endif"),
+        tag_no_case("elif"),
+        tag_no_case("else if"),
+        tag_no_case("else"),
+        tag_no_case("if"),
+    ))(input)?;
 
     // Ensure it's a whole word by checking what follows
     let (input, raw_args) = not_line_ending(input)?;
@@ -90,17 +107,22 @@ fn parse_command(input: &str) -> IResult<&str, IniItem> {
     }
 
     let args_stripped = strip_inline_comment(raw_args);
+    let mut args: Vec<String> = args_stripped
+        .split_whitespace()
+        .map(|s| s.to_string())
+        .collect();
 
-    Ok((
-        input,
-        IniItem::Command {
-            command: cmd.to_string(),
-            args: args_stripped
-                .split_whitespace()
-                .map(|s| s.to_string())
-                .collect(),
-        },
-    ))
+    let mut command = cmd.to_string();
+    if command.eq_ignore_ascii_case("else")
+        && args
+            .first()
+            .is_some_and(|first| first.eq_ignore_ascii_case("if"))
+    {
+        let if_word = args.remove(0);
+        command = format!("{} {}", cmd, if_word);
+    }
+
+    Ok((input, IniItem::Command { command, args }))
 }
 
 fn parse_section_header(input: &str) -> IResult<&str, String> {

@@ -16,11 +16,11 @@ pub use merger::Merger;
 pub use namespacer::Namespacer;
 pub use validator::Validator;
 
-use vfs::DeploymentPlan;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use vfs::DeploymentPlan;
 
 pub struct ModProfile {
     pub uuid: String,
@@ -202,11 +202,9 @@ pub fn process_global_mods(
 
             let mut merged_doc = Merger::merge_documents(processed_docs)?;
 
-            // 2. Conflict Detection & Key Sanitization (Pre-Allocation)
+            // 2. Conflict Detection (Pre-Allocation)
             for section in &mut merged_doc.sections {
                 for item in &mut section.items {
-                    crate::key_allocator::KeyAllocator::sanitize_global_item(item);
-
                     if section.name.to_lowercase().starts_with("textureoverride") {
                         if let ini::ast::IniItem::Pair { key, value } = item {
                             if key.eq_ignore_ascii_case("hash") {
@@ -341,3 +339,86 @@ pub fn process_global_mods(
     Ok((generated_files, report))
 }
 mod snapshots_test;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ini::ast::IniItem;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_process_global_mods_preserves_keys_and_headers() {
+        let dir = tempdir().unwrap();
+        let global_dir = dir.path().join("global_mod");
+        fs::create_dir_all(&global_dir).unwrap();
+
+        let global_ini = global_dir.join("global.ini");
+        let ini_content = r#"
+[KeyGlobalToggle]
+key = 6
+type = toggle
+
+[TextureOverrideGlobalEffect]
+hash = aabbccdd
+match_first_index = 0
+match_priority = 5
+ps-t0 = ResourceEffect
+"#;
+        fs::write(&global_ini, ini_content).unwrap();
+
+        let global_mod = ModProfile {
+            uuid: "33333333-3333-3333-3333-333333333333".to_string(),
+            mod_root: global_dir,
+            ini_paths: vec![global_ini],
+            deploy_path: "11_GlobalUI/33333333-3333-3333-3333-333333333333".to_string(),
+            character: "Global/Other".to_string(),
+            mod_type: "ui".to_string(),
+            nsfw: false,
+            tags: vec!["ui".to_string()],
+        };
+
+        let (files, _report) = process_global_mods(vec![global_mod]).unwrap();
+        assert_eq!(files.len(), 1);
+        let (_, output_ini) = &files[0];
+
+        // 1. Verify a global mod with key = 6 is not forcibly rewritten to F11
+        assert!(output_ini.contains("key = 6"));
+        assert!(!output_ini.contains("F11"));
+
+        // 2. Verify its match_priority stays outside the if $Active_... == 1 gate
+        let (_, doc) = ini::parser::parse_ini(output_ini).expect("Output INI must parse");
+        let override_sec = doc
+            .sections
+            .iter()
+            .find(|s| s.name.to_lowercase().starts_with("textureoverride"))
+            .expect("TextureOverride section must exist");
+
+        let priority_idx = override_sec
+            .items
+            .iter()
+            .position(|item| match item {
+                IniItem::Pair { key, .. } => key.eq_ignore_ascii_case("match_priority"),
+                _ => false,
+            })
+            .expect("match_priority must be present");
+
+        let if_idx = override_sec
+            .items
+            .iter()
+            .position(|item| match item {
+                IniItem::Command { command, .. } => command.eq_ignore_ascii_case("if"),
+                _ => false,
+            })
+            .expect("if command must be present");
+
+        assert!(
+            priority_idx < if_idx,
+            "match_priority must be outside (before) the if gate"
+        );
+
+        // 3. Validator check
+        Validator::validate_logic(&doc)
+            .expect("Global mod INI must pass Validator::validate_logic");
+    }
+}

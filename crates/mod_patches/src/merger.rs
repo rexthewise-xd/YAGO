@@ -5,6 +5,50 @@ use std::collections::{HashMap, HashSet};
 pub struct Merger;
 
 impl Merger {
+    fn is_declarative_match_header(item: &IniItem) -> bool {
+        if let IniItem::Pair { key, .. } = item {
+            let key_lower = key.trim().to_lowercase();
+            key_lower == "hash"
+                || key_lower == "allow_duplicate_hash"
+                || key_lower == "filter_index"
+                || key_lower.starts_with("match_")
+        } else {
+            false
+        }
+    }
+
+    fn wrap_section_items_in_gate(section: &mut Section, condition_arg: &str) {
+        let (declarative, runtime): (Vec<IniItem>, Vec<IniItem>) = section
+            .items
+            .drain(..)
+            .partition(Self::is_declarative_match_header);
+
+        let has_runtime_body = runtime.iter().any(|item| match item {
+            IniItem::Pair { .. } | IniItem::Command { .. } => true,
+            IniItem::Comment(_) => false,
+        });
+
+        if !has_runtime_body {
+            let mut all_items = declarative;
+            all_items.extend(runtime);
+            section.items = all_items;
+            return;
+        }
+
+        let mut new_items = declarative;
+        new_items.push(IniItem::Command {
+            command: "if".to_string(),
+            args: vec![condition_arg.to_string()],
+        });
+        new_items.extend(runtime);
+        new_items.push(IniItem::Command {
+            command: "endif".to_string(),
+            args: vec![],
+        });
+
+        section.items = new_items;
+    }
+
     /// Wraps a specific section in a logic gate.
     /// Used for [TextureOverride] blocks to ensure they only activate under specific conditions.
     pub fn wrap_in_logic_gate(section: &mut Section, condition_arg: &str) -> Result<()> {
@@ -13,20 +57,7 @@ impl Merger {
             return Ok(()); // Only wrap overrides
         }
 
-        let endif = "endif".to_string();
-
-        let mut new_items = Vec::new();
-        new_items.push(IniItem::Command {
-            command: "if".to_string(),
-            args: vec![condition_arg.to_string()],
-        });
-        new_items.extend(section.items.clone());
-        new_items.push(IniItem::Command {
-            command: endif,
-            args: vec![],
-        });
-
-        section.items = new_items;
+        Self::wrap_section_items_in_gate(section, condition_arg);
         Ok(())
     }
 
@@ -70,20 +101,7 @@ impl Merger {
         }
 
         let condition_arg = format!("${} == {}", var_name, index);
-        let endif = "endif".to_string();
-
-        let mut new_items = Vec::new();
-        new_items.push(IniItem::Command {
-            command: "if".to_string(),
-            args: vec![condition_arg],
-        });
-        new_items.extend(section.items.clone());
-        new_items.push(IniItem::Command {
-            command: endif,
-            args: vec![],
-        });
-
-        section.items = new_items;
+        Self::wrap_section_items_in_gate(section, &condition_arg);
         Ok(())
     }
 
@@ -169,5 +187,242 @@ impl Merger {
         Ok(IniDocument {
             sections: combined_sections,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_wrap_in_logic_gate_and_wardrobe_gate() {
+        let mut section = Section {
+            name: "TextureOverrideBody".to_string(),
+            items: vec![
+                IniItem::Pair {
+                    key: "hash".to_string(),
+                    value: "deadbeef".to_string(),
+                },
+                IniItem::Pair {
+                    key: "match_first_index".to_string(),
+                    value: "0".to_string(),
+                },
+                IniItem::Pair {
+                    key: "match_priority".to_string(),
+                    value: "1".to_string(),
+                },
+                IniItem::Pair {
+                    key: "vb0".to_string(),
+                    value: "ResourceVB0".to_string(),
+                },
+                IniItem::Pair {
+                    key: "ps-t0".to_string(),
+                    value: "ResourceTexture".to_string(),
+                },
+                IniItem::Pair {
+                    key: "drawindexed".to_string(),
+                    value: "auto".to_string(),
+                },
+                IniItem::Command {
+                    command: "run".to_string(),
+                    args: vec!["CommandListTest".to_string()],
+                },
+            ],
+        };
+
+        Merger::wrap_in_logic_gate(&mut section, "$active == 1").unwrap();
+
+        assert_eq!(section.items.len(), 9);
+        assert_eq!(
+            section.items[0],
+            IniItem::Pair {
+                key: "hash".to_string(),
+                value: "deadbeef".to_string(),
+            }
+        );
+        assert_eq!(
+            section.items[1],
+            IniItem::Pair {
+                key: "match_first_index".to_string(),
+                value: "0".to_string(),
+            }
+        );
+        assert_eq!(
+            section.items[2],
+            IniItem::Pair {
+                key: "match_priority".to_string(),
+                value: "1".to_string(),
+            }
+        );
+        assert_eq!(
+            section.items[3],
+            IniItem::Command {
+                command: "if".to_string(),
+                args: vec!["$active == 1".to_string()],
+            }
+        );
+        assert_eq!(
+            section.items[4],
+            IniItem::Pair {
+                key: "vb0".to_string(),
+                value: "ResourceVB0".to_string(),
+            }
+        );
+        assert_eq!(
+            section.items[5],
+            IniItem::Pair {
+                key: "ps-t0".to_string(),
+                value: "ResourceTexture".to_string(),
+            }
+        );
+        assert_eq!(
+            section.items[6],
+            IniItem::Pair {
+                key: "drawindexed".to_string(),
+                value: "auto".to_string(),
+            }
+        );
+        assert_eq!(
+            section.items[7],
+            IniItem::Command {
+                command: "run".to_string(),
+                args: vec!["CommandListTest".to_string()],
+            }
+        );
+        assert_eq!(
+            section.items[8],
+            IniItem::Command {
+                command: "endif".to_string(),
+                args: vec![],
+            }
+        );
+
+        // Test wrap_in_wardrobe_gate
+        let mut wardrobe_section = Section {
+            name: "TextureOverrideFace".to_string(),
+            items: vec![
+                IniItem::Pair {
+                    key: "hash".to_string(),
+                    value: "cafebabe".to_string(),
+                },
+                IniItem::Pair {
+                    key: "match_first_index".to_string(),
+                    value: "10".to_string(),
+                },
+                IniItem::Pair {
+                    key: "match_priority".to_string(),
+                    value: "2".to_string(),
+                },
+                IniItem::Pair {
+                    key: "vb0".to_string(),
+                    value: "ResourceFaceVB".to_string(),
+                },
+                IniItem::Pair {
+                    key: "ps-t0".to_string(),
+                    value: "ResourceFaceTex".to_string(),
+                },
+                IniItem::Pair {
+                    key: "drawindexed".to_string(),
+                    value: "auto".to_string(),
+                },
+                IniItem::Command {
+                    command: "run".to_string(),
+                    args: vec!["CommandListFace".to_string()],
+                },
+            ],
+        };
+
+        Merger::wrap_in_wardrobe_gate(&mut wardrobe_section, "wardrobe_keqing", 1).unwrap();
+
+        assert_eq!(wardrobe_section.items.len(), 9);
+        assert_eq!(
+            wardrobe_section.items[0],
+            IniItem::Pair {
+                key: "hash".to_string(),
+                value: "cafebabe".to_string(),
+            }
+        );
+        assert_eq!(
+            wardrobe_section.items[1],
+            IniItem::Pair {
+                key: "match_first_index".to_string(),
+                value: "10".to_string(),
+            }
+        );
+        assert_eq!(
+            wardrobe_section.items[2],
+            IniItem::Pair {
+                key: "match_priority".to_string(),
+                value: "2".to_string(),
+            }
+        );
+        assert_eq!(
+            wardrobe_section.items[3],
+            IniItem::Command {
+                command: "if".to_string(),
+                args: vec!["$wardrobe_keqing == 1".to_string()],
+            }
+        );
+        assert_eq!(
+            wardrobe_section.items[4],
+            IniItem::Pair {
+                key: "vb0".to_string(),
+                value: "ResourceFaceVB".to_string(),
+            }
+        );
+        assert_eq!(
+            wardrobe_section.items[5],
+            IniItem::Pair {
+                key: "ps-t0".to_string(),
+                value: "ResourceFaceTex".to_string(),
+            }
+        );
+        assert_eq!(
+            wardrobe_section.items[6],
+            IniItem::Pair {
+                key: "drawindexed".to_string(),
+                value: "auto".to_string(),
+            }
+        );
+        assert_eq!(
+            wardrobe_section.items[7],
+            IniItem::Command {
+                command: "run".to_string(),
+                args: vec!["CommandListFace".to_string()],
+            }
+        );
+        assert_eq!(
+            wardrobe_section.items[8],
+            IniItem::Command {
+                command: "endif".to_string(),
+                args: vec![],
+            }
+        );
+
+        // Test section with no runtime body items remains unwrapped
+        let mut header_only_section = Section {
+            name: "TextureOverrideHair".to_string(),
+            items: vec![
+                IniItem::Pair {
+                    key: "hash".to_string(),
+                    value: "feedbeef".to_string(),
+                },
+                IniItem::Pair {
+                    key: "match_first_index".to_string(),
+                    value: "0".to_string(),
+                },
+                IniItem::Pair {
+                    key: "match_priority".to_string(),
+                    value: "0".to_string(),
+                },
+            ],
+        };
+
+        Merger::wrap_in_wardrobe_gate(&mut header_only_section, "wardrobe_keqing", 1).unwrap();
+        assert_eq!(header_only_section.items.len(), 3);
+        assert!(header_only_section
+            .items
+            .iter()
+            .all(|item| !matches!(item, IniItem::Command { .. })));
     }
 }

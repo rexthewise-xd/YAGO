@@ -125,7 +125,7 @@ impl IniMerger {
                     // Rewrite filename in resource
                     processed_line = filename_regex
                         .replace_all(&processed_line, |c: &regex::Captures| {
-                            format!("filename = Skin_{}\\{}", index, &c[1].replace("/", "\\"))
+                            format!("filename = Skin_{}\\{}", index, c[1].replace('/', "\\"))
                         })
                         .to_string();
                     main_resources.push(processed_line);
