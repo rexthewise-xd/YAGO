@@ -15,6 +15,8 @@
   "injection_method_linux": "Proxy",
   "modloader_enabled": true,
   "supported_injection_methods": ["Proxy"],
+  "start_method": "Shell",
+  "umu_game_id": "umu-genshin",
   "loader_repo": "SilentNightSound/GIMI-Package",
   "hash_repo": "leotorrez/GI-Model-Importer-Assets",
   "patch_logic": {},

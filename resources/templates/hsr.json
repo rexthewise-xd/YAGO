@@ -15,6 +15,7 @@
   "injection_method_linux": "Proxy",
   "modloader_enabled": true,
   "supported_injection_methods": ["Proxy", "Loader"],
+  "umu_game_id": "umu-hsr",
   "loader_repo": "SpectrumQT/SRMI-Package",
   "hash_repo": "leotorrez/SR-Model-Importer-Assets",
   "patch_logic": {},

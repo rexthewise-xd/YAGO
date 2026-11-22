@@ -4,11 +4,13 @@ use std::path::Path;
 
 pub struct LoaderContext;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct InstallOptions {
     pub game_id: String,
     pub install_reshade: bool,
     pub injection_method: Option<String>, // "Proxy" or "Loader"
+    pub unsafe_mode: bool,
+    pub use_rabbit_wrapper: bool,
 }
 
 impl LoaderContext {
@@ -59,7 +61,7 @@ impl LoaderContext {
 
         // 1. Base Loader
         if method == "Proxy" {
-            Self::install_proxy(game_dir, &game_lib, &options.game_id).await?;
+            Self::install_proxy(game_dir, &game_lib, &options.game_id, options.unsafe_mode).await?;
         } else if method == "Loader" {
             // In Loader mode, we don't copy the proxy DLLs to game root.
             // But we might need to ensure the loader folder itself is ready (handled by quartermaster/download_loader)
@@ -87,7 +89,27 @@ impl LoaderContext {
                 common_lib.join("reshade.dll")
             };
 
-            if reshade_source.exists() {
+            let rabbit_source = if common_lib.join("RabbitWrapper.dll").exists() {
+                Some(common_lib.join("RabbitWrapper.dll"))
+            } else if common_lib.join("rabbitwrapper.dll").exists() {
+                Some(common_lib.join("rabbitwrapper.dll"))
+            } else {
+                None
+            };
+
+            if options.use_rabbit_wrapper && rabbit_source.is_some() {
+                let wrapper = rabbit_source.unwrap();
+                println!(
+                    "Loader: Copying RabbitWrapper to Game Root as dxgi.dll: {:?}",
+                    target_reshade
+                );
+                std::fs::copy(&wrapper, &target_reshade).map_err(LoaderError::Io)?;
+
+                if reshade_source.exists() {
+                    let target_reshade_dll = game_dir.join("ReShade.dll");
+                    let _ = std::fs::copy(&reshade_source, target_reshade_dll);
+                }
+            } else if reshade_source.exists() {
                 println!(
                     "Loader: Copying ReShade to Game Root as dxgi.dll: {:?}",
                     target_reshade
@@ -144,6 +166,7 @@ impl LoaderContext {
         game_dir: &Path,
         loader_source: &Path,
         game_exe: &str,
+        unsafe_mode: bool,
     ) -> Result<()> {
         let source_dll = loader_source.join("d3d11.dll");
         if !source_dll.exists() {
@@ -154,25 +177,39 @@ impl LoaderContext {
         }
 
         let target_dll = game_dir.join("d3d11.dll");
-        println!("Proxy: Copying loader to {:?}", target_dll);
-        std::fs::copy(&source_dll, &target_dll).map_err(LoaderError::Io)?;
+        if unsafe_mode && target_dll.exists() {
+            println!(
+                "Proxy: Unsafe mode active. Preserving existing {:?}",
+                target_dll
+            );
+        } else {
+            println!("Proxy: Copying loader to {:?}", target_dll);
+            std::fs::copy(&source_dll, &target_dll).map_err(LoaderError::Io)?;
+        }
 
         // Copy d3dx.ini
         let source_ini = loader_source.join("d3dx.ini");
         if source_ini.exists() {
             let target_ini = game_dir.join("d3dx.ini");
-            println!("Proxy: Copying d3dx.ini to {:?}", target_ini);
-            std::fs::copy(&source_ini, &target_ini).map_err(LoaderError::Io)?;
+            if unsafe_mode && target_ini.exists() {
+                println!(
+                    "Proxy: Unsafe mode active. Preserving existing {:?}",
+                    target_ini
+                );
+            } else {
+                println!("Proxy: Copying d3dx.ini to {:?}", target_ini);
+                std::fs::copy(&source_ini, &target_ini).map_err(LoaderError::Io)?;
 
-            // Patch d3dx.ini for Proxy Mode
-            println!(
-                "Proxy: Patching d3dx.ini (target={}, module=d3d11.dll)",
-                game_exe
-            );
-            // Ensure target refers to the game executable
-            IniDocument::patch_file(&target_ini, "Loader", "target", game_exe)?;
-            // Ensure module is set to d3d11.dll (Passive Mode)
-            IniDocument::patch_file(&target_ini, "Loader", "module", "d3d11.dll")?;
+                // Patch d3dx.ini for Proxy Mode
+                println!(
+                    "Proxy: Patching d3dx.ini (target={}, module=d3d11.dll)",
+                    game_exe
+                );
+                // Ensure target refers to the game executable
+                IniDocument::patch_file(&target_ini, "Loader", "target", game_exe)?;
+                // Ensure module is set to d3d11.dll (Passive Mode)
+                IniDocument::patch_file(&target_ini, "Loader", "module", "d3d11.dll")?;
+            }
         }
 
         // Symlink support directories
@@ -219,19 +256,23 @@ impl LoaderContext {
         game_dir: &Path,
         prefix_path: Option<&Path>,
         remove_reshade: bool,
+        unsafe_mode: bool,
     ) -> Result<()> {
         let mut files = vec![
-            "d3d11.dll",
             "version.dll",
             "winmm.dll",
             "d3dcompiler_47.dll",
             "d3dcompiler_46.dll",
             "nvapi64.dll",
-            "d3dx.ini",
             "ReShade.ini",
             "3dmloader.dll",
             "3dmloader.exe",
         ];
+
+        if !unsafe_mode {
+            files.push("d3d11.dll");
+            files.push("d3dx.ini");
+        }
 
         if remove_reshade {
             files.push("dxgi.dll");
@@ -281,6 +322,6 @@ impl LoaderContext {
 
     /// Legacy support function
     pub async fn remove_loader(game_path: &Path) -> Result<()> {
-        Self::uninstall_loader(game_path, None, true).await
+        Self::uninstall_loader(game_path, None, true, false).await
     }
 }

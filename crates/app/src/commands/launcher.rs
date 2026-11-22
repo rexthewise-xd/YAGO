@@ -125,6 +125,7 @@ impl AppCore {
                     &game_root,
                     config.prefix_path.as_deref(),
                     true,
+                    config.unsafe_mode,
                 )
                 .await;
             }
@@ -276,15 +277,7 @@ impl AppCore {
     pub async fn redeploy_mods(&self, game_path: String) -> Result<(), String> {
         self.deploy_mods(game_path, true).await?;
 
-        match enigo::Enigo::new(&enigo::Settings::default()) {
-            Ok(mut enigo) => {
-                use enigo::{Direction, Key, Keyboard};
-                if let Err(e) = enigo.key(Key::F10, Direction::Click) {
-                    return Err(format!("Failed to send F10: {}", e));
-                }
-            }
-            Err(e) => return Err(format!("Failed to initialize Enigo: {}", e)),
-        }
+        launcher::input::send_reload_f10().map_err(|e| format!("Failed to send F10: {}", e))?;
 
         self.emit(AppEvent::TaskCompleted("Hot Reload successful".to_string()));
         Ok(())
@@ -371,6 +364,27 @@ impl AppCore {
                 if let Some(els) = update.enable_linux_shield {
                     config.enable_linux_shield = els;
                 }
+                if let Some(sm) = update.start_method {
+                    config.start_method = sm;
+                }
+                if let Some(um) = update.unsafe_mode {
+                    config.unsafe_mode = um;
+                }
+                if let Some(ugid) = update.umu_game_id {
+                    config.umu_game_id = ugid;
+                }
+                if let Some(uu) = update.use_umu {
+                    config.use_umu = uu;
+                }
+                if let Some(plc) = update.pre_launch_cmd {
+                    config.pre_launch_cmd = plc;
+                }
+                if let Some(pec) = update.post_exit_cmd {
+                    config.post_exit_cmd = pec;
+                }
+                if let Some(urw) = update.use_rabbit_wrapper {
+                    config.use_rabbit_wrapper = urw;
+                }
                 self.librarian
                     .lock()
                     .await
@@ -410,6 +424,13 @@ impl AppCore {
                 enable_linux_shield,
                 modloader_enabled,
                 base_storage,
+                config_start_method,
+                config_unsafe_mode,
+                config_umu_game_id,
+                config_use_umu,
+                config_pre_launch_cmd,
+                config_post_exit_cmd,
+                config_use_rabbit_wrapper,
             ) = {
                 let dbs = self.game_dbs.lock().await;
                 let db = dbs.get(&game_id).ok_or("Game not found")?;
@@ -443,6 +464,13 @@ impl AppCore {
                     config.enable_linux_shield,
                     config.modloader_enabled,
                     base_storage,
+                    config.start_method,
+                    config.unsafe_mode,
+                    config.umu_game_id.clone(),
+                    config.use_umu,
+                    config.pre_launch_cmd.clone(),
+                    config.post_exit_cmd.clone(),
+                    config.use_rabbit_wrapper,
                 )
             };
             let method = if modloader_enabled {
@@ -530,9 +558,19 @@ impl AppCore {
                         resource_lib("win_helper.exe")
                     }
                 },
+                start_method: crate::commands::library::map_start_method(config_start_method),
+                use_umu: config_use_umu,
+                umu_game_id: config_umu_game_id.clone(),
+                proton_wayland: profile.proton_wayland,
+                dxvk_low_latency: profile.dxvk_low_latency,
+                obs_vkcapture: profile.obs_vkcapture,
+                lsfg_vk: profile.lsfg_vk,
+                pre_launch_cmd: config_pre_launch_cmd.clone(),
+                post_exit_cmd: config_post_exit_cmd.clone(),
             };
             if method == launcher::InjectionMethod::Loader {
-                let _ = LoaderContext::uninstall_loader(&game_dir, None, false).await;
+                let _ = LoaderContext::uninstall_loader(&game_dir, None, false, config_unsafe_mode)
+                    .await;
             }
             #[cfg(target_os = "linux")]
             {
@@ -542,6 +580,7 @@ impl AppCore {
                     .map_err(|e| e.to_string())?;
             }
             let loaders_root = base_storage.join("loaders");
+            let config_use_rabbit = config_use_rabbit_wrapper;
             if method == launcher::InjectionMethod::Proxy {
                 LoaderContext::install_loader(
                     &game_dir,
@@ -550,6 +589,8 @@ impl AppCore {
                         game_id: game_id.clone(),
                         install_reshade: profile.use_reshade,
                         injection_method: Some("Proxy".to_string()),
+                        unsafe_mode: config_unsafe_mode,
+                        use_rabbit_wrapper: config_use_rabbit,
                     },
                 )
                 .await
@@ -562,6 +603,8 @@ impl AppCore {
                         game_id: game_id.clone(),
                         install_reshade: true,
                         injection_method: Some("ReShadeOnly".to_string()),
+                        unsafe_mode: config_unsafe_mode,
+                        use_rabbit_wrapper: config_use_rabbit,
                     },
                 )
                 .await
@@ -584,6 +627,7 @@ impl AppCore {
                                 &game_dir,
                                 Some(&prefix_path),
                                 profile.use_reshade,
+                                config_unsafe_mode,
                             )
                             .await;
                         }
@@ -598,5 +642,39 @@ impl AppCore {
         .await;
         *self.is_launching.lock().await = false;
         res
+    }
+
+    pub async fn run_graphics_audit(
+        &self,
+        game_id: String,
+    ) -> Result<Vec<launcher::GraphicsAuditWarning>, String> {
+        let (exe_path, install_path) = {
+            let dbs = self.game_dbs.lock().await;
+            let db = dbs.get(&game_id).ok_or("Game not found")?;
+            let config = db.games.get(&game_id).ok_or("Config missing")?;
+            (config.exe_path.clone(), config.install_path.clone())
+        };
+
+        let game_dir = if install_path.exists() {
+            install_path
+        } else {
+            exe_path
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or(install_path)
+        };
+
+        Ok(launcher::audit_game_graphics(&game_id, &game_dir))
+    }
+
+    pub async fn apply_wuwa_engine_tweaks(&self, game_id: String) -> Result<(), String> {
+        let install_path = {
+            let dbs = self.game_dbs.lock().await;
+            let db = dbs.get(&game_id).ok_or("Game not found")?;
+            let config = db.games.get(&game_id).ok_or("Config missing")?;
+            config.install_path.clone()
+        };
+
+        launcher::apply_wuwa_engine_tweaks(&install_path).map_err(|e| e.to_string())
     }
 }

@@ -15,6 +15,7 @@ pub use gamebanana::{
     game_id_to_gb_id, get_mod_detail, parse_yago_uri, search_mods, GbModDetail, GbModFile,
     GbModSummary, YagoDeepLink,
 };
+pub use proton::ProtonSource;
 
 use anyhow::{anyhow, Result};
 use futures_util::StreamExt;

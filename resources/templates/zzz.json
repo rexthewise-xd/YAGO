@@ -15,6 +15,7 @@
   "injection_method_linux": "Proxy",
   "modloader_enabled": true,
   "supported_injection_methods": ["Proxy", "Loader"],
+  "umu_game_id": "umu-zzz",
   "loader_repo": "leotorrez/ZZMI-Package",
   "hash_repo": "leotorrez/ZZ-Model-Importer-Assets",
   "patch_logic": {},

@@ -1,5 +1,8 @@
 use dioxus::prelude::*;
-use yago_app::{GameConfigUpdate, InjectionMethod, ProfileUpdate, TexFxConfig};
+use yago_app::{
+    GameConfigUpdate, GraphicsAuditWarning, InjectionMethod, ProfileUpdate, StartMethod,
+    TexFxConfig, VoicePackStatus,
+};
 
 use crate::icons::{IconName, IconSvg};
 use crate::picker::pick_folder;
@@ -319,6 +322,16 @@ fn GameAdvancedTab(game_id: String) -> Element {
     let modloader_on = game.modloader_enabled;
     let shield_on = game.enable_linux_shield;
     let auto_update_on = game.auto_update;
+    let start_method = game.start_method;
+    let unsafe_mode_on = game.unsafe_mode;
+    let use_umu_on = game.use_umu;
+    let mut umu_id = use_signal(|| game.umu_game_id.clone().unwrap_or_default());
+    let mut pre_cmd = use_signal(|| game.pre_launch_cmd.clone().unwrap_or_default());
+    let mut post_cmd = use_signal(|| game.post_exit_cmd.clone().unwrap_or_default());
+
+    let mut audit_results = use_signal(|| None::<Vec<GraphicsAuditWarning>>);
+    let mut auditing = use_signal(|| false);
+    let mut applying_tweaks = use_signal(|| false);
 
     let profile = {
         let p_id = &game.active_profile_id;
@@ -457,6 +470,82 @@ fn GameAdvancedTab(game_id: String) -> Element {
                     option { value: "ManualMap", disabled: true, "Manual Map (Unsupported)" }
                 }
             }
+
+            div { class: "setting-row",
+                div { class: "setting-row-left",
+                    div { class: "setting-icon",
+                        IconSvg { name: IconName::Settings, size: 18 }
+                    }
+                    div {
+                        div { class: "setting-label", "Start Method" }
+                        div { class: "setting-desc", "Process spawning strategy (Shell recommended for HoYo games on Windows)" }
+                    }
+                }
+                select {
+                    class: "input select-sm",
+                    value: "{start_method:?}",
+                    onchange: {
+                        let store = store.clone();
+                        let gid = game_id.clone();
+                        move |e: Event<FormData>| {
+                            let method = match e.value().as_str() {
+                                "Shell" => StartMethod::Shell,
+                                "Steam" => StartMethod::Steam,
+                                "Manual" => StartMethod::Manual,
+                                _ => StartMethod::Native,
+                            };
+                            let core = store.core.clone();
+                            let gid = gid.clone();
+                            let update = GameConfigUpdate {
+                                start_method: Some(method),
+                                ..Default::default()
+                            };
+                            let s = store.clone();
+                            s.call(
+                                async move { core.update_game_config(gid, update).await },
+                                |_, _| {},
+                            );
+                        }
+                    },
+                    option { value: "Native", "Native Process" }
+                    option { value: "Shell", "Shell Execution (cmd /C start)" }
+                    option { value: "Steam", "Steam Protocol" }
+                    option { value: "Manual", "Manual Launch" }
+                }
+            }
+
+            div { class: "setting-row",
+                div { class: "setting-row-left",
+                    div { class: "setting-icon",
+                        IconSvg { name: IconName::Shield, size: 18 }
+                    }
+                    div {
+                        div { class: "setting-label", "Unsafe Mode (Pin Custom DLLs)" }
+                        div { class: "setting-desc", "Preserve manually placed d3d11.dll and d3dx.ini without overwriting" }
+                    }
+                }
+                button {
+                    class: if unsafe_mode_on { "toggle-switch on" } else { "toggle-switch" },
+                    onclick: {
+                        let store = store.clone();
+                        let gid = game_id.clone();
+                        move |_| {
+                            let core = store.core.clone();
+                            let gid = gid.clone();
+                            let update = GameConfigUpdate {
+                                unsafe_mode: Some(!unsafe_mode_on),
+                                ..Default::default()
+                            };
+                            let s = store.clone();
+                            s.call(
+                                async move { core.update_game_config(gid, update).await },
+                                |_, _| {},
+                            );
+                        }
+                    },
+                    div { class: "toggle-knob" }
+                }
+            }
         }
 
         div { class: "settings-section",
@@ -542,9 +631,395 @@ fn GameAdvancedTab(game_id: String) -> Element {
             ProfileToggle { label: "Gamescope", desc: "Run game inside a Gamescope compositor", checked: use_gamescope, field: "use_gamescope", game_id: game_id.clone() }
             ProfileToggle { label: "MangoHud", desc: "In-game FPS / stats overlay", checked: use_mangohud, field: "use_mangohud", game_id: game_id.clone() }
             ProfileToggle { label: "ReShade", desc: "Post-processing shader framework", checked: use_reshade, field: "use_reshade", game_id: game_id.clone() }
+
+            div { class: "setting-row setting-row-col",
+                div { class: "setting-row-top",
+                    div { class: "setting-row-left",
+                        div { class: "setting-icon",
+                            IconSvg { name: IconName::Deploy, size: 18 }
+                        }
+                        div {
+                            div { class: "setting-label", "UMU Launcher (umu-run)" }
+                            div { class: "setting-desc", "Route execution through Unified Linux Wine Game Launcher" }
+                        }
+                    }
+                    button {
+                        class: if use_umu_on { "toggle-switch on" } else { "toggle-switch" },
+                        onclick: {
+                            let store = store.clone();
+                            let gid = game_id.clone();
+                            move |_| {
+                                let core = store.core.clone();
+                                let gid = gid.clone();
+                                let update = GameConfigUpdate {
+                                    use_umu: Some(!use_umu_on),
+                                    ..Default::default()
+                                };
+                                let s = store.clone();
+                                s.call(
+                                    async move { core.update_game_config(gid, update).await },
+                                    |_, _| {},
+                                );
+                            }
+                        },
+                        div { class: "toggle-knob" }
+                    }
+                }
+                if use_umu_on {
+                    div { style: "display: flex; align-items: center; gap: 8px; margin-top: 8px;",
+                        span { class: "mono", style: "font-size: 11px; color: var(--text-sec);", "GAMEID:" }
+                        input {
+                            class: "input",
+                            style: "flex: 1; font-size: 11px;",
+                            placeholder: "e.g. umu-genshin, umu-wuwa (default: 0)",
+                            value: "{(umu_id)()}",
+                            oninput: move |e| umu_id.set(e.value()),
+                            onblur: {
+                                let store = store.clone();
+                                let gid = game_id.clone();
+                                move |_| {
+                                    let val = (umu_id)().trim().to_string();
+                                    let core = store.core.clone();
+                                    let gid = gid.clone();
+                                    let update = GameConfigUpdate {
+                                        umu_game_id: Some(if val.is_empty() { None } else { Some(val) }),
+                                        ..Default::default()
+                                    };
+                                    let s = store.clone();
+                                    s.call(
+                                        async move { core.update_game_config(gid, update).await },
+                                        |_, _| {},
+                                    );
+                                }
+                            },
+                        }
+                    }
+                }
+            }
+
+            div { class: "setting-row setting-row-col",
+                div { class: "setting-label", style: "margin-bottom: 6px;", "Custom Launch Commands" }
+                div { style: "display: flex; flex-direction: column; gap: 6px;",
+                    div { style: "display: flex; align-items: center; gap: 8px;",
+                        span { class: "mono", style: "font-size: 10px; color: var(--text-sec); width: 80px;", "Pre-Launch:" }
+                        input {
+                            class: "input mono",
+                            style: "flex: 1; font-size: 11px;",
+                            placeholder: "Command to run before game starts...",
+                            value: "{(pre_cmd)()}",
+                            oninput: move |e| pre_cmd.set(e.value()),
+                            onblur: {
+                                let store = store.clone();
+                                let gid = game_id.clone();
+                                move |_| {
+                                    let val = (pre_cmd)().trim().to_string();
+                                    let core = store.core.clone();
+                                    let gid = gid.clone();
+                                    let update = GameConfigUpdate {
+                                        pre_launch_cmd: Some(if val.is_empty() { None } else { Some(val) }),
+                                        ..Default::default()
+                                    };
+                                    let s = store.clone();
+                                    s.call(
+                                        async move { core.update_game_config(gid, update).await },
+                                        |_, _| {},
+                                    );
+                                }
+                            },
+                        }
+                    }
+                    div { style: "display: flex; align-items: center; gap: 8px;",
+                        span { class: "mono", style: "font-size: 10px; color: var(--text-sec); width: 80px;", "Post-Exit:" }
+                        input {
+                            class: "input mono",
+                            style: "flex: 1; font-size: 11px;",
+                            placeholder: "Command to run after game process exits...",
+                            value: "{(post_cmd)()}",
+                            oninput: move |e| post_cmd.set(e.value()),
+                            onblur: {
+                                let store = store.clone();
+                                let gid = game_id.clone();
+                                move |_| {
+                                    let val = (post_cmd)().trim().to_string();
+                                    let core = store.core.clone();
+                                    let gid = gid.clone();
+                                    let update = GameConfigUpdate {
+                                        post_exit_cmd: Some(if val.is_empty() { None } else { Some(val) }),
+                                        ..Default::default()
+                                    };
+                                    let s = store.clone();
+                                    s.call(
+                                        async move { core.update_game_config(gid, update).await },
+                                        |_, _| {},
+                                    );
+                                }
+                            },
+                        }
+                    }
+                }
+            }
         }
 
+        div { class: "settings-section",
+            div { class: "settings-section-head",
+                div {
+                    h3 { class: "settings-section-title mono", "GRAPHICS & CONFIG AUDIT" }
+                    div { class: "setting-desc", "Scan game installation and configuration for mod-breaking issues" }
+                }
+                button {
+                    class: "btn btn-sm",
+                    disabled: (auditing)(),
+                    onclick: {
+                        let store = store.clone();
+                        let gid = game_id.clone();
+                        move |_| {
+                            let core = store.core.clone();
+                            let gid = gid.clone();
+                            let mut s = store.clone();
+                            spawn(async move {
+                                auditing.set(true);
+                                match core.run_graphics_audit(gid).await {
+                                    Ok(res) => {
+                                        let count = res.len();
+                                        audit_results.set(Some(res));
+                                        if count == 0 {
+                                            s.toast(ToastKind::Success, "Audit passed: No configuration issues detected");
+                                        } else {
+                                            s.toast(ToastKind::Info, format!("Audit found {count} warning(s)/advisory"));
+                                        }
+                                    }
+                                    Err(e) => s.toast(ToastKind::Error, e),
+                                }
+                                auditing.set(false);
+                            });
+                        }
+                    },
+                    IconSvg { name: IconName::Search, size: 14 }
+                    if (auditing)() { "AUDITING…" } else { "RUN AUDIT" }
+                }
+            }
+
+            if let Some(res) = (audit_results)() {
+                if res.is_empty() {
+                    div { style: "padding: 10px; background: rgba(34, 197, 94, 0.1); border: 1px solid rgba(34, 197, 94, 0.4); border-radius: 4px; font-size: 11px; color: #4ade80;",
+                        "✓ All graphics configuration checks passed. No issues detected."
+                    }
+                } else {
+                    div { style: "display: flex; flex-direction: column; gap: 8px;",
+                        for (idx, w) in res.iter().enumerate() {
+                            {
+                                let is_fixable = w.fixable;
+                                let is_wuwa = game_id.to_lowercase().contains("wuwa") || game_id.to_lowercase().contains("wuthering");
+                                let store = store.clone();
+                                let gid = game_id.clone();
+                                rsx! {
+                                    div {
+                                        key: "{idx}",
+                                        style: "padding: 10px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px; display: flex; flex-direction: column; gap: 6px;",
+                                        div { style: "display: flex; align-items: center; justify-content: space-between;",
+                                            div { style: "display: flex; align-items: center; gap: 8px;",
+                                                span {
+                                                    class: if w.level == "Error" { "tag tag-danger" } else if w.level == "Warning" { "tag tag-warn" } else { "tag" },
+                                                    "{w.level}"
+                                                }
+                                                span { style: "font-size: 12px; font-weight: 600;", "{w.title}" }
+                                            }
+                                            if is_fixable && is_wuwa {
+                                                button {
+                                                    class: "btn btn-sm btn-accent",
+                                                    disabled: (applying_tweaks)(),
+                                                    onclick: move |_| {
+                                                        let core = store.core.clone();
+                                                        let gid = gid.clone();
+                                                        let mut s = store.clone();
+                                                        spawn(async move {
+                                                            applying_tweaks.set(true);
+                                                            match core.apply_wuwa_engine_tweaks(gid.clone()).await {
+                                                                Ok(_) => {
+                                                                    s.toast(ToastKind::Success, "Applied WuWa Engine.ini LOD & streaming tweaks");
+                                                                    if let Ok(new_res) = core.run_graphics_audit(gid).await {
+                                                                        audit_results.set(Some(new_res));
+                                                                    }
+                                                                }
+                                                                Err(e) => s.toast(ToastKind::Error, e),
+                                                            }
+                                                            applying_tweaks.set(false);
+                                                        });
+                                                    },
+                                                    if (applying_tweaks)() { "APPLYING…" } else { "APPLY WUWA ENGINE TWEAKS" }
+                                                }
+                                            }
+                                        }
+                                        div { style: "font-size: 11px; color: var(--text-sec); line-height: 1.4;",
+                                            "{w.message}"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        GameVoicePacksSection { game_id: game_id.clone() }
+
         GameEffectsSection { game_id: game_id.clone() }
+    }
+}
+
+#[component]
+fn GameVoicePacksSection(game_id: String) -> Element {
+    let store = use_context::<Store>();
+    let mut voice_packs = use_signal(Vec::<VoicePackStatus>::new);
+    let mut checking = use_signal(|| false);
+    let mut operating_pack = use_signal(|| None::<String>);
+    let mut checked_once = use_signal(|| false);
+
+    let packs = (voice_packs)();
+    let is_checking = (checking)();
+    let operating = (operating_pack)();
+    let has_checked = (checked_once)();
+
+    rsx! {
+        div { class: "settings-section",
+            div { class: "settings-section-head",
+                div {
+                    h3 { class: "settings-section-title mono", "VOICE-OVER PACKS & STORAGE" }
+                    div { class: "setting-desc", "Manage downloaded language audio packages to optimize game install size" }
+                }
+                button {
+                    class: "btn btn-sm",
+                    disabled: is_checking || operating.is_some(),
+                    onclick: {
+                        let store = store.clone();
+                        let gid = game_id.clone();
+                        move |_| {
+                            let core = store.core.clone();
+                            let gid = gid.clone();
+                            let mut s = store.clone();
+                            spawn(async move {
+                                checking.set(true);
+                                match core.list_voice_packs(gid).await {
+                                    Ok(res) => {
+                                        let count = res.len();
+                                        voice_packs.set(res);
+                                        checked_once.set(true);
+                                        s.toast(ToastKind::Info, format!("Found {count} voice-over pack option(s)"));
+                                    }
+                                    Err(e) => s.toast(ToastKind::Error, e),
+                                }
+                                checking.set(false);
+                            });
+                        }
+                    },
+                    IconSvg { name: IconName::Refresh, size: 14 }
+                    if is_checking { "CHECKING…" } else { "CHECK VOICE PACKS" }
+                }
+            }
+
+            if has_checked && packs.is_empty() {
+                div { style: "padding: 10px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px; font-size: 11px; color: var(--muted);",
+                    "No additional audio packages available for this title."
+                }
+            } else if !packs.is_empty() {
+                div { style: "display: flex; flex-direction: column; gap: 8px;",
+                    for pack in packs.iter() {
+                        {
+                            let pid = pack.id.clone();
+                            let pname = pack.name.clone();
+                            let size_gb = format!("{:.2} GB", pack.size_bytes as f64 / 1024.0 / 1024.0 / 1024.0);
+                            let is_installed = pack.installed;
+                            let is_curr_operating = operating.as_deref() == Some(&pid);
+
+                            let store = store.clone();
+                            let gid = game_id.clone();
+                            let pid_clone = pid.clone();
+
+                            rsx! {
+                                div {
+                                    key: "{pid}",
+                                    style: "padding: 10px 12px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px; display: flex; align-items: center; justify-content: space-between;",
+                                    div { style: "display: flex; align-items: center; gap: 10px;",
+                                        div {
+                                            div { style: "font-size: 12px; font-weight: 600; color: var(--text);", "{pname}" }
+                                            div { class: "mono", style: "font-size: 10px; color: var(--muted);", "Size: {size_gb}" }
+                                        }
+                                        if is_installed {
+                                            span { class: "tag", style: "background: rgba(34, 197, 94, 0.15); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.4);", "INSTALLED" }
+                                        } else {
+                                            span { class: "tag tag-outline", "NOT INSTALLED" }
+                                        }
+                                    }
+
+                                    if is_installed {
+                                        button {
+                                            class: "btn btn-sm btn-danger",
+                                            disabled: operating.is_some(),
+                                            onclick: {
+                                                let pname = pname.clone();
+                                                move |_| {
+                                                    let core = store.core.clone();
+                                                    let gid = gid.clone();
+                                                    let pid = pid_clone.clone();
+                                                    let mut s = store.clone();
+                                                    let pname = pname.clone();
+                                                    spawn(async move {
+                                                        operating_pack.set(Some(pid.clone()));
+                                                        match core.remove_voice_pack(gid.clone(), pid.clone()).await {
+                                                            Ok(freed) => {
+                                                                let freed_mb = freed as f64 / 1024.0 / 1024.0;
+                                                                s.toast(ToastKind::Success, format!("Removed {pname} (freed {freed_mb:.1} MB)"));
+                                                                if let Ok(updated) = core.list_voice_packs(gid).await {
+                                                                    voice_packs.set(updated);
+                                                                }
+                                                            }
+                                                            Err(e) => s.toast(ToastKind::Error, e),
+                                                        }
+                                                        operating_pack.set(None);
+                                                    });
+                                                }
+                                            },
+                                            if is_curr_operating { "REMOVING…" } else { "REMOVE" }
+                                        }
+                                    } else {
+                                        button {
+                                            class: "btn btn-sm btn-accent",
+                                            disabled: operating.is_some(),
+                                            onclick: {
+                                                let pname = pname.clone();
+                                                move |_| {
+                                                    let core = store.core.clone();
+                                                    let gid = gid.clone();
+                                                    let pid = pid_clone.clone();
+                                                    let mut s = store.clone();
+                                                    let pname = pname.clone();
+                                                    spawn(async move {
+                                                        operating_pack.set(Some(pid.clone()));
+                                                        s.toast(ToastKind::Info, format!("Downloading {pname}..."));
+                                                        match core.install_voice_pack(gid.clone(), pid.clone()).await {
+                                                            Ok(_) => {
+                                                                s.toast(ToastKind::Success, format!("Voice pack {pname} download started"));
+                                                                if let Ok(updated) = core.list_voice_packs(gid).await {
+                                                                    voice_packs.set(updated);
+                                                                }
+                                                            }
+                                                            Err(e) => s.toast(ToastKind::Error, e),
+                                                        }
+                                                        operating_pack.set(None);
+                                                    });
+                                                }
+                                            },
+                                            if is_curr_operating { "DOWNLOADING…" } else { "INSTALL" }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

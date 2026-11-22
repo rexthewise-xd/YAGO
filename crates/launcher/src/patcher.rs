@@ -1,6 +1,6 @@
-use crate::error::Result;
 #[cfg(windows)]
 use crate::error::MarshalError;
+use crate::error::Result;
 
 #[cfg(windows)]
 use std::ffi::OsStr;

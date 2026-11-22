@@ -2,6 +2,7 @@ pub mod client;
 pub mod downloader;
 pub mod error;
 pub mod journal;
+pub mod kuro;
 pub mod orchestrator;
 pub mod patcher;
 pub mod protocol;
@@ -9,10 +10,14 @@ pub mod provider;
 pub mod scanner;
 pub mod verifier;
 
-pub use client::SophonClient;
+pub use client::{GameRegion, SophonClient};
 pub use downloader::{DownloadProgress, DownloadStatus, DownloadTask, Downloader};
 pub use error::{Result, SophonError};
 pub use journal::{JournalManager, PatchEntry, PatchJournal, PatchStatus, PatchTarget};
+pub use kuro::{
+    is_protected_user_path, KuroChannelInfo, KuroClient, KuroFileEntry, KuroIndexResponse,
+    KuroResourceManifest,
+};
 pub use orchestrator::{ChunkOrchestrator, OrchestratorEvent};
 pub use protocol::{
     ChunkInfo, DiffPackage, FileChunkReference, ManifestFile, ManifestStats, SophonManifest,

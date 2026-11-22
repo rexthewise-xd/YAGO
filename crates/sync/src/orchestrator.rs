@@ -615,15 +615,29 @@ impl ChunkOrchestrator {
 
     async fn process_patch(
         client: &SophonClient,
-        _work: &ChunkWork,
+        work: &ChunkWork,
         patch: &PatchSource,
-        _target_dir: &Path,
+        target_dir: &Path,
     ) -> Result<Vec<u8>> {
         // 1. Download Diff
         let diff_data = client.download_raw(&patch.diff_url).await?;
 
-        // 2. Get Old Data
-        let old_chunk_data = vec![0u8];
+        // 2. Read Old Data from install_path
+        let mut old_chunk_data = Vec::new();
+        if let Some(target) = work.targets.first() {
+            let full_path = target_dir.join(&target.relative_path);
+            if full_path.exists() {
+                if let Ok(mut f) = std::fs::File::open(&full_path) {
+                    use std::io::{Read, Seek, SeekFrom};
+                    if f.seek(SeekFrom::Start(target.offset)).is_ok() {
+                        let mut buf = vec![0u8; work.size as usize];
+                        let read_bytes = f.read(&mut buf).unwrap_or(0);
+                        buf.truncate(read_bytes);
+                        old_chunk_data = buf;
+                    }
+                }
+            }
+        }
 
         // 3. Apply Patch
         let mut new_chunk_data = Vec::new();

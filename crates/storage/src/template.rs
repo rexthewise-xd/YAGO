@@ -1,5 +1,5 @@
 use crate::error::Result;
-use crate::models::{FpsConfig, InjectionMethod};
+use crate::models::{FpsConfig, InjectionMethod, StartMethod};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
@@ -58,6 +58,20 @@ pub struct GameTemplate {
     pub auto_update: Option<bool>,
     #[serde(default)]
     pub community_folder: Option<String>,
+    #[serde(default)]
+    pub start_method: Option<StartMethod>,
+    #[serde(default)]
+    pub unsafe_mode: Option<bool>,
+    #[serde(default)]
+    pub umu_game_id: Option<String>,
+    #[serde(default)]
+    pub use_umu: Option<bool>,
+    #[serde(default)]
+    pub pre_launch_cmd: Option<String>,
+    #[serde(default)]
+    pub post_exit_cmd: Option<String>,
+    #[serde(default)]
+    pub use_rabbit_wrapper: Option<bool>,
 
     // Sophon Discovery Fields
     #[serde(default)]

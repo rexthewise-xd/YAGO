@@ -32,8 +32,11 @@ pub async fn get_latest_release(owner: &str, repo: &str) -> Result<GithubRelease
     let mut release: GithubRelease = response.json().await?;
 
     // Filtering Logic
-    if repo == "proton-ge-custom" {
-        release.assets.retain(|a| a.name.ends_with(".tar.gz"));
+    if repo.to_lowercase().contains("proton") {
+        release.assets.retain(|a| {
+            let n = a.name.to_lowercase();
+            n.ends_with(".tar.gz") || n.ends_with(".tar.xz") || n.ends_with(".tar.zst")
+        });
     } else if repo == "WWMI-Package" || repo == "XXMITools" || repo == "GI-Model-Importer" {
         release.assets.retain(|a| a.name.ends_with(".zip"));
     }

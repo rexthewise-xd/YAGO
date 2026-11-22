@@ -3240,6 +3240,7 @@ dependencies = [
 name = "launcher"
 version = "0.1.0"
 dependencies = [
+ "enigo",
  "libc",
  "serde",
  "sysinfo",

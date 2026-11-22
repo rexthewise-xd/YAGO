@@ -24,6 +24,27 @@ pub enum InjectionMethod {
     ManualMap,    // Stealth mapping (Advanced/Experimental)
 }
 
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum StartMethod {
+    #[default]
+    Native,
+    Shell,
+    Steam,
+    Manual,
+}
+
+fn is_in_path(binary: &str) -> bool {
+    if let Ok(path_var) = std::env::var("PATH") {
+        for dir in std::env::split_paths(&path_var) {
+            let candidate = dir.join(binary);
+            if candidate.is_file() {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 #[derive(Clone)]
 pub struct LaunchOptions {
     pub exe_path: PathBuf,
@@ -46,6 +67,15 @@ pub struct LaunchOptions {
     pub enable_linux_shield: bool,
     pub shield_path: Option<PathBuf>,
     pub helper_path: Option<PathBuf>,
+    pub start_method: StartMethod,
+    pub use_umu: bool,
+    pub umu_game_id: Option<String>,
+    pub proton_wayland: bool,
+    pub dxvk_low_latency: bool,
+    pub obs_vkcapture: bool,
+    pub lsfg_vk: bool,
+    pub pre_launch_cmd: Option<String>,
+    pub post_exit_cmd: Option<String>,
 }
 
 use crate::SandboxManager;
@@ -68,6 +98,22 @@ impl Launcher {
                         "Remote Injection on Linux requires win_helper.exe",
                     )));
                 }
+            }
+        }
+
+        // Pre-launch command
+        if let Some(pre) = &options.pre_launch_cmd {
+            let pre_trimmed = pre.trim();
+            if !pre_trimmed.is_empty() {
+                println!("Launcher: Executing pre-launch command: {}", pre_trimmed);
+                #[cfg(windows)]
+                let _ = std::process::Command::new("cmd")
+                    .args(["/C", pre_trimmed])
+                    .status();
+                #[cfg(not(windows))]
+                let _ = std::process::Command::new("sh")
+                    .args(["-c", pre_trimmed])
+                    .status();
             }
         }
 
@@ -233,9 +279,28 @@ impl Launcher {
         };
         let prefix_path = options.prefix_path.clone();
         let method = options.injection_method;
+        let post_exit_cmd = options.post_exit_cmd.clone();
 
         tokio::spawn(async move {
             let _ = child.wait().await;
+
+            // Execute post-exit command if configured
+            if let Some(post) = post_exit_cmd {
+                let post_trimmed = post.trim();
+                if !post_trimmed.is_empty() {
+                    println!("Launcher: Executing post-exit command: {}", post_trimmed);
+                    #[cfg(windows)]
+                    let _ = tokio::process::Command::new("cmd")
+                        .args(["/C", &post_trimmed])
+                        .status()
+                        .await;
+                    #[cfg(not(windows))]
+                    let _ = tokio::process::Command::new("sh")
+                        .args(["-c", &post_trimmed])
+                        .status()
+                        .await;
+                }
+            }
 
             // 1. Active Sandbox: Snapshot
             if let (Some(dir), Some(profile_dir), Some(config)) =
@@ -358,11 +423,15 @@ impl Launcher {
     pub fn build_command(&self, options: &LaunchOptions) -> Result<Command> {
         #[cfg(unix)]
         {
+            let umu_in_path = options.use_umu && is_in_path("umu-run");
+
             // ... (outermost wrapper logic)
             let base_cmd = if options.use_gamemode {
                 "gamemoderun".to_string()
             } else if options.use_gamescope {
                 "gamescope".to_string()
+            } else if umu_in_path {
+                "umu-run".to_string()
             } else if matches!(options.runner.runner_type, RunnerType::Native) {
                 options.exe_path.to_string_lossy().to_string()
             } else {
@@ -401,8 +470,27 @@ impl Launcher {
                 cmd.arg("--");
             }
 
+            if (options.use_gamemode || options.use_gamescope) && umu_in_path {
+                cmd.arg("umu-run");
+            }
+
             if options.use_mangohud {
                 cmd.env("MANGOHUD", "1");
+            }
+
+            // Linux profile runtime flags
+            if options.proton_wayland {
+                cmd.env("PROTON_ENABLE_WAYLAND", "1");
+            }
+            if options.dxvk_low_latency {
+                cmd.env("PROTON_DXVK_LOWLATENCY", "1");
+            }
+            if options.obs_vkcapture {
+                cmd.env("OBS_VKCAPTURE", "1");
+            }
+            if options.lsfg_vk {
+                cmd.env("ENABLE_LSFG_VK", "1");
+                cmd.env("LSFG_PROCESS", "1");
             }
 
             // injection overrides
@@ -415,8 +503,30 @@ impl Launcher {
                 }
             }
 
-            // Runner / Exe
-            if !matches!(options.runner.runner_type, RunnerType::Native) {
+            if umu_in_path {
+                let game_id_str = options.umu_game_id.as_deref().unwrap_or("0");
+                cmd.env("GAMEID", game_id_str);
+                cmd.env("PROTONPATH", &options.runner.path);
+                if !options.prefix_path.as_os_str().is_empty() {
+                    let pfx_dir = options.prefix_path.join("pfx");
+                    cmd.env("WINEPREFIX", pfx_dir);
+                }
+                cmd.env("WINEDEBUG", "-all");
+                cmd.env("WINE_LARGE_ADDRESS_AWARE", "1");
+
+                if options.modloader_enabled && options.enable_linux_shield {
+                    if let Some(shield_path) = &options.shield_path {
+                        if shield_path.exists() {
+                            cmd.env("LD_PRELOAD", shield_path);
+                            if let Some(dir) = &options.current_dir {
+                                cmd.env("YAGO_PROTECT_PATH", dir);
+                            }
+                        }
+                    }
+                }
+
+                cmd.arg(&options.exe_path);
+            } else if !matches!(options.runner.runner_type, RunnerType::Native) {
                 if base_cmd != options.runner.path.to_string_lossy() {
                     cmd.arg(&options.runner.path);
                 }
@@ -486,12 +596,88 @@ impl Launcher {
 
         #[cfg(windows)]
         {
-            let mut cmd = Command::new(&options.exe_path);
-            if let Some(dir) = &options.current_dir {
-                cmd.current_dir(dir);
-            }
+            let mut cmd = if options.start_method == StartMethod::Shell {
+                let mut c = Command::new("cmd");
+                c.arg("/C").arg("start").arg("").arg("/D");
+                if let Some(dir) = &options.current_dir {
+                    c.arg(dir);
+                } else {
+                    c.arg(".");
+                }
+                c.arg(&options.exe_path);
+                c
+            } else {
+                let mut c = Command::new(&options.exe_path);
+                if let Some(dir) = &options.current_dir {
+                    c.current_dir(dir);
+                }
+                c
+            };
             cmd.args(&options.args);
             Ok(cmd)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_build_command_env_vars() {
+        let options = LaunchOptions {
+            exe_path: PathBuf::from("/game/GenshinImpact.exe"),
+            args: vec![],
+            current_dir: Some(PathBuf::from("/game")),
+            runner: RunnerConfig {
+                runner_type: RunnerType::Proton,
+                path: PathBuf::from("/runner/proton"),
+            },
+            prefix_path: PathBuf::from("/prefix"),
+            use_gamescope: false,
+            gamescope_args: vec![],
+            use_gamemode: false,
+            use_mangohud: false,
+            injection_method: InjectionMethod::Proxy,
+            modloader_enabled: true,
+            loader_path: None,
+            injected_dlls: vec![],
+            resolution: (1920, 1080),
+            fps_target: None,
+            sandbox_config: None,
+            sandbox_data_dir: None,
+            enable_linux_shield: false,
+            shield_path: None,
+            helper_path: None,
+            start_method: StartMethod::Native,
+            use_umu: false,
+            umu_game_id: Some("umu-genshin".to_string()),
+            proton_wayland: true,
+            dxvk_low_latency: true,
+            obs_vkcapture: true,
+            lsfg_vk: true,
+            pre_launch_cmd: None,
+            post_exit_cmd: None,
+        };
+
+        let launcher = Launcher;
+        let cmd = launcher.build_command(&options).unwrap();
+        #[cfg(unix)]
+        {
+            let envs: Vec<_> = cmd.as_std().get_envs().collect();
+            let find_env = |key: &str| {
+                envs.iter()
+                    .find(|(k, _)| k.to_str() == Some(key))
+                    .and_then(|(_, v)| v.as_ref().and_then(|v| v.to_str()))
+            };
+            assert_eq!(find_env("PROTON_ENABLE_WAYLAND"), Some("1"));
+            assert_eq!(find_env("PROTON_DXVK_LOWLATENCY"), Some("1"));
+            assert_eq!(find_env("OBS_VKCAPTURE"), Some("1"));
+            assert_eq!(find_env("ENABLE_LSFG_VK"), Some("1"));
+            assert_eq!(
+                find_env("WINEDLLOVERRIDES"),
+                Some("d3d11,dxgi,d3dcompiler_47=n,b")
+            );
         }
     }
 }

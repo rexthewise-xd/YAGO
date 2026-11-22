@@ -1,6 +1,6 @@
 use dioxus::prelude::*;
-use storage::models::Profile;
 use storage::exporter::export_profile_for_sharing;
+use storage::models::Profile;
 use uuid::Uuid;
 use yago_app::ProfileUpdate;
 
@@ -433,12 +433,22 @@ fn ProfileDetailEditor(
     let (w_init, h_init) = profile.resolution.unwrap_or((1920, 1080));
     let mut res_w = use_signal(|| w_init.to_string());
     let mut res_h = use_signal(|| h_init.to_string());
-    let mut save_path = use_signal(|| profile.save_data_path.as_ref().map(|p| p.display().to_string()).unwrap_or_default());
+    let mut save_path = use_signal(|| {
+        profile
+            .save_data_path
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default()
+    });
 
     let mut gamemode = use_signal(|| profile.use_gamemode);
     let mut gamescope = use_signal(|| profile.use_gamescope);
     let mut mangohud = use_signal(|| profile.use_mangohud);
     let mut reshade = use_signal(|| profile.use_reshade);
+    let mut proton_wayland = use_signal(|| profile.proton_wayland);
+    let mut dxvk_low_latency = use_signal(|| profile.dxvk_low_latency);
+    let mut obs_vkcapture = use_signal(|| profile.obs_vkcapture);
+    let mut lsfg_vk = use_signal(|| profile.lsfg_vk);
 
     let pid = profile.id.to_string();
 
@@ -490,6 +500,10 @@ fn ProfileDetailEditor(
                             use_gamescope: Some((gamescope)()),
                             use_mangohud: Some((mangohud)()),
                             use_reshade: Some((reshade)()),
+                            proton_wayland: Some((proton_wayland)()),
+                            dxvk_low_latency: Some((dxvk_low_latency)()),
+                            obs_vkcapture: Some((obs_vkcapture)()),
+                            lsfg_vk: Some((lsfg_vk)()),
                             ..Default::default()
                         };
 
@@ -635,6 +649,54 @@ fn ProfileDetailEditor(
                             div { class: "toggle-knob" }
                         }
                     }
+
+                    div { class: "toggle-card",
+                        div {
+                            div { class: "setting-label", "Proton Wayland" }
+                            div { class: "setting-desc", "Native Wayland driver" }
+                        }
+                        button {
+                            class: if (proton_wayland)() { "toggle-switch on" } else { "toggle-switch" },
+                            onclick: move |_| proton_wayland.set(!(proton_wayland)()),
+                            div { class: "toggle-knob" }
+                        }
+                    }
+
+                    div { class: "toggle-card",
+                        div {
+                            div { class: "setting-label", "DXVK Low Latency" }
+                            div { class: "setting-desc", "DXVK frame pacing boost" }
+                        }
+                        button {
+                            class: if (dxvk_low_latency)() { "toggle-switch on" } else { "toggle-switch" },
+                            onclick: move |_| dxvk_low_latency.set(!(dxvk_low_latency)()),
+                            div { class: "toggle-knob" }
+                        }
+                    }
+
+                    div { class: "toggle-card",
+                        div {
+                            div { class: "setting-label", "OBS VkCapture" }
+                            div { class: "setting-desc", "OBS Vulkan direct capture" }
+                        }
+                        button {
+                            class: if (obs_vkcapture)() { "toggle-switch on" } else { "toggle-switch" },
+                            onclick: move |_| obs_vkcapture.set(!(obs_vkcapture)()),
+                            div { class: "toggle-knob" }
+                        }
+                    }
+
+                    div { class: "toggle-card",
+                        div {
+                            div { class: "setting-label", "LSFG-VK" }
+                            div { class: "setting-desc", "Lossless Scaling Vulkan" }
+                        }
+                        button {
+                            class: if (lsfg_vk)() { "toggle-switch on" } else { "toggle-switch" },
+                            onclick: move |_| lsfg_vk.set(!(lsfg_vk)()),
+                            div { class: "toggle-knob" }
+                        }
+                    }
                 }
             }
 
@@ -738,8 +800,12 @@ fn do_reorder_profile_mod(
     delta: i32,
 ) {
     let Some(db) = store.db(&game_id) else { return };
-    let Ok(pid) = Uuid::parse_str(&profile_id) else { return };
-    let Some(profile) = db.profiles.get(&pid) else { return };
+    let Ok(pid) = Uuid::parse_str(&profile_id) else {
+        return;
+    };
+    let Some(profile) = db.profiles.get(&pid) else {
+        return;
+    };
 
     let mut order = profile.load_order.clone();
     for mid in db.mods.keys() {
@@ -747,7 +813,9 @@ fn do_reorder_profile_mod(
             order.push(*mid);
         }
     }
-    let Some(idx) = order.iter().position(|id| *id == mod_id) else { return };
+    let Some(idx) = order.iter().position(|id| *id == mod_id) else {
+        return;
+    };
     let new_idx = (idx as i32 + delta).clamp(0, order.len() as i32 - 1) as usize;
     if new_idx == idx {
         return;

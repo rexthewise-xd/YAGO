@@ -112,6 +112,18 @@ impl AppCore {
                 if let Some(order) = update.load_order {
                     profile.load_order = order;
                 }
+                if let Some(pw) = update.proton_wayland {
+                    profile.proton_wayland = pw;
+                }
+                if let Some(ll) = update.dxvk_low_latency {
+                    profile.dxvk_low_latency = ll;
+                }
+                if let Some(vk) = update.obs_vkcapture {
+                    profile.obs_vkcapture = vk;
+                }
+                if let Some(ls) = update.lsfg_vk {
+                    profile.lsfg_vk = ls;
+                }
                 self.librarian
                     .lock()
                     .await

@@ -1,4 +1,3 @@
-use enigo::{Direction, Enigo, Key, Keyboard, Settings};
 use std::path::Path;
 use vfs::Vfs;
 
@@ -64,15 +63,10 @@ impl Emergency {
         }
 
         println!("Sending F10 to reload modloader...");
-        match Enigo::new(&Settings::default()) {
-            Ok(mut enigo) => {
-                if let Err(e) = enigo.key(Key::F10, Direction::Click) {
-                    eprintln!("Failed to send F10: {}", e);
-                } else {
-                    println!("F10 sent successfully.");
-                }
-            }
-            Err(e) => eprintln!("Failed to initialize Enigo: {}", e),
+        if let Err(e) = launcher::input::send_reload_f10() {
+            eprintln!("Failed to send F10: {}", e);
+        } else {
+            println!("F10 sent successfully.");
         }
 
         core.emit(AppEvent::PanicTriggered);

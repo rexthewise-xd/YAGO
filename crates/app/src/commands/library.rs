@@ -87,6 +87,13 @@ pub struct GameConfigUpdate {
     pub active_runner_id: Option<Option<String>>,
     pub prefix_path: Option<Option<String>>,
     pub enable_linux_shield: Option<bool>,
+    pub start_method: Option<storage::models::StartMethod>,
+    pub unsafe_mode: Option<bool>,
+    pub umu_game_id: Option<Option<String>>,
+    pub use_umu: Option<bool>,
+    pub pre_launch_cmd: Option<Option<String>>,
+    pub post_exit_cmd: Option<Option<String>>,
+    pub use_rabbit_wrapper: Option<bool>,
 }
 
 #[derive(serde::Deserialize, Default)]
@@ -104,6 +111,10 @@ pub struct ProfileUpdate {
     pub save_data_path: Option<PathBuf>,
     pub enabled_mod_ids: Option<Vec<Uuid>>,
     pub load_order: Option<Vec<Uuid>>,
+    pub proton_wayland: Option<bool>,
+    pub dxvk_low_latency: Option<bool>,
+    pub obs_vkcapture: Option<bool>,
+    pub lsfg_vk: Option<bool>,
 }
 
 pub(crate) fn map_injection(m: storage::InjectionMethod) -> InjectionMethod {
@@ -113,6 +124,15 @@ pub(crate) fn map_injection(m: storage::InjectionMethod) -> InjectionMethod {
         storage::InjectionMethod::Loader => InjectionMethod::Loader,
         storage::InjectionMethod::RemoteThread => InjectionMethod::RemoteThread,
         storage::InjectionMethod::ManualMap => InjectionMethod::ManualMap,
+    }
+}
+
+pub(crate) fn map_start_method(m: storage::StartMethod) -> launcher::StartMethod {
+    match m {
+        storage::StartMethod::Native => launcher::StartMethod::Native,
+        storage::StartMethod::Shell => launcher::StartMethod::Shell,
+        storage::StartMethod::Steam => launcher::StartMethod::Steam,
+        storage::StartMethod::Manual => launcher::StartMethod::Manual,
     }
 }
 
@@ -212,6 +232,19 @@ impl AppCore {
                 .unwrap_or_default(),
             remote_info: None,
             enabled_effects: vec![],
+            start_method: template.start_method.unwrap_or_else(|| {
+                if game_id.contains("genshin") {
+                    storage::models::StartMethod::Shell
+                } else {
+                    storage::models::StartMethod::Native
+                }
+            }),
+            unsafe_mode: template.unsafe_mode.unwrap_or(false),
+            umu_game_id: template.umu_game_id.clone(),
+            use_umu: template.use_umu.unwrap_or(false),
+            pre_launch_cmd: template.pre_launch_cmd.clone(),
+            post_exit_cmd: template.post_exit_cmd.clone(),
+            use_rabbit_wrapper: template.use_rabbit_wrapper.unwrap_or(false),
         };
 
         let mut db = LibraryDatabase::default();
@@ -275,6 +308,7 @@ impl AppCore {
                 &template.sophon_launcher_id,
                 &template.sophon_channel_id,
                 &template.sophon_sub_channel_id,
+                true,
             )
             .await
             .map_err(|e| e.to_string())?;
@@ -580,6 +614,7 @@ impl AppCore {
                                 &template.sophon_launcher_id,
                                 &template.sophon_channel_id,
                                 &template.sophon_sub_channel_id,
+                                true,
                             )
                             .await;
 
@@ -725,6 +760,7 @@ impl AppCore {
                             &template.sophon_launcher_id,
                             &template.sophon_channel_id,
                             &template.sophon_sub_channel_id,
+                            true,
                         )
                         .await;
 

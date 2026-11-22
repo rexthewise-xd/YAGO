@@ -143,6 +143,19 @@ impl Discovery {
                     .unwrap_or_default(),
                 remote_info: None,
                 enabled_effects: vec![],
+                start_method: template.and_then(|t| t.start_method).unwrap_or_else(|| {
+                    if game_id.contains("genshin") {
+                        crate::models::StartMethod::Shell
+                    } else {
+                        crate::models::StartMethod::Native
+                    }
+                }),
+                unsafe_mode: template.and_then(|t| t.unsafe_mode).unwrap_or(false),
+                umu_game_id: template.and_then(|t| t.umu_game_id.clone()),
+                use_umu: template.and_then(|t| t.use_umu).unwrap_or(false),
+                pre_launch_cmd: template.and_then(|t| t.pre_launch_cmd.clone()),
+                post_exit_cmd: template.and_then(|t| t.post_exit_cmd.clone()),
+                use_rabbit_wrapper: template.and_then(|t| t.use_rabbit_wrapper).unwrap_or(false),
             };
 
             let mut db = LibraryDatabase::default();

@@ -1,8 +1,8 @@
 use crate::error::Result;
 use crate::models::RemoteInfo;
 use crate::template::GameTemplate;
-use sync::SophonClient;
 use std::collections::HashMap;
+use sync::SophonClient;
 
 #[derive(serde::Serialize, Clone, Debug, PartialEq)]
 pub struct RemoteCatalogEntry {
@@ -52,6 +52,7 @@ impl CatalogManager {
                     &template.sophon_launcher_id,
                     &template.sophon_channel_id,
                     &template.sophon_sub_channel_id,
+                    true,
                 )
                 .await
             {

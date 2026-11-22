@@ -4,6 +4,39 @@ use anyhow::{anyhow, Result};
 use std::path::Path;
 use vfs::archive::extract_targz;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum ProtonSource {
+    GeProton,
+    ProtonCachyOs,
+    DwProton,
+}
+
+impl ProtonSource {
+    pub fn all() -> &'static [ProtonSource] {
+        &[
+            ProtonSource::GeProton,
+            ProtonSource::ProtonCachyOs,
+            ProtonSource::DwProton,
+        ]
+    }
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            ProtonSource::GeProton => "GE-Proton",
+            ProtonSource::ProtonCachyOs => "Proton-CachyOS",
+            ProtonSource::DwProton => "DW-Proton",
+        }
+    }
+
+    pub fn repo(&self) -> (&'static str, &'static str) {
+        match self {
+            ProtonSource::GeProton => ("GloriousEggroll", "proton-ge-custom"),
+            ProtonSource::ProtonCachyOs => ("CachyOS", "proton-cachyos"),
+            ProtonSource::DwProton => ("Dawn-Wings", "DW-Proton"),
+        }
+    }
+}
+
 pub async fn update_ge_proton<F>(
     owner: &str,
     repo_name: &str,

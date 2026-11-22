@@ -23,6 +23,15 @@ pub enum InjectionMethod {
     ManualMap,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum StartMethod {
+    #[default]
+    Native,
+    Shell,
+    Steam,
+    Manual,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct SandboxConfig {
     pub registry_keys: Vec<String>, // e.g., "HKCU\Software\miHoYo\Genshin Impact"
@@ -113,6 +122,20 @@ pub struct GameConfig {
     pub remote_info: Option<RemoteInfo>,
     #[serde(default)]
     pub enabled_effects: Vec<String>,
+    #[serde(default)]
+    pub start_method: StartMethod,
+    #[serde(default)]
+    pub unsafe_mode: bool,
+    #[serde(default)]
+    pub umu_game_id: Option<String>,
+    #[serde(default)]
+    pub use_umu: bool,
+    #[serde(default)]
+    pub pre_launch_cmd: Option<String>,
+    #[serde(default)]
+    pub post_exit_cmd: Option<String>,
+    #[serde(default)]
+    pub use_rabbit_wrapper: bool,
 }
 
 fn default_true() -> bool {
@@ -215,6 +238,14 @@ pub struct Profile {
     pub gamescope_args: Vec<String>,
     #[serde(default)]
     pub save_data_path: Option<PathBuf>,
+    #[serde(default)]
+    pub proton_wayland: bool,
+    #[serde(default)]
+    pub dxvk_low_latency: bool,
+    #[serde(default)]
+    pub obs_vkcapture: bool,
+    #[serde(default)]
+    pub lsfg_vk: bool,
     pub added_at: DateTime<Utc>,
 }
 
@@ -234,6 +265,10 @@ impl Default for Profile {
             launch_args: vec![],
             gamescope_args: vec![],
             save_data_path: None,
+            proton_wayland: false,
+            dxvk_low_latency: false,
+            obs_vkcapture: false,
+            lsfg_vk: false,
             added_at: Utc::now(),
         }
     }

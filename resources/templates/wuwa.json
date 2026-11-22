@@ -16,6 +16,7 @@
   "injection_method_linux": "Proxy",
   "modloader_enabled": true,
   "supported_injection_methods": ["Proxy"],
+  "umu_game_id": "umu-wuwa",
   "loader_repo": "SpectrumQT/WWMI-Package",
   "hash_db_url": "https://raw.githubusercontent.com/SpectrumQT/WWMI-Package/main/Tools/hashes.json",
   "patch_logic": {},

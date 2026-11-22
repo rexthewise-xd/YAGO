@@ -17,7 +17,7 @@ pub use error::{LibrarianError, Result};
 pub use import::Importer;
 pub use models::{
     FpsConfig, GameConfig, InjectionMethod, InstallStatus, LibraryDatabase, ModCompatibility,
-    ModConfig, ModMetadata, ModRecord, Profile, SandboxConfig,
+    ModConfig, ModMetadata, ModRecord, Profile, SandboxConfig, StartMethod,
 };
 pub use scanner::DiscoveredGame;
 pub use settings::{GlobalSettings, SettingsManager};
