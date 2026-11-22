@@ -109,6 +109,23 @@ fn GeneralTab() -> Element {
             }
 
             ToggleRow {
+                icon: IconName::Settings,
+                label: "Suppress $creditinfo Banners Globally",
+                description: "Silently suppress on-screen credit banners across all games and mods",
+                checked: settings.suppress_creditinfo_global,
+                ontoggle: {
+                    let store = store.clone();
+                    move |_| {
+                        let mut s = store.clone();
+                        let mut new_settings = (s.settings)();
+                        new_settings.suppress_creditinfo_global =
+                            !new_settings.suppress_creditinfo_global;
+                        s.save_settings(new_settings);
+                    }
+                },
+            }
+
+            ToggleRow {
                 icon: IconName::Deploy,
                 label: "Close on Launch",
                 description: "Exit YAGO to tray when a game starts",
@@ -227,14 +244,46 @@ fn PathsTab() -> Element {
     let settings = (store.settings)();
 
     let paths: Vec<(&str, &str, String)> = vec![
-        ("Steam Compatibility Tools", "Path to Steam 'compatibilitytools.d' directory", settings.steam_compat_tools_path.display().to_string()),
-        ("Global Wine Prefix", "Default prefix for games without a specific one", settings.wine_prefix_path.display().to_string()),
-        ("YAGO Storage Path", "Where YAGO stores databases, metadata, and logs", settings.yago_storage_path.display().to_string()),
-        ("Default Games Folder", "Default location for new game installs", settings.default_games_path.display().to_string()),
-        ("Mods Storage", "Where YAGO stores and manages your mods", settings.mods_path.display().to_string()),
-        ("Runners (Proton/Wine)", "Folder for compatibility layers", settings.runners_path.display().to_string()),
-        ("Game Prefixes", "Base directory for game-specific prefixes", settings.prefixes_path.display().to_string()),
-        ("Cache Directory", "Temporary downloads and extracted files", settings.cache_path.display().to_string()),
+        (
+            "Steam Compatibility Tools",
+            "Path to Steam 'compatibilitytools.d' directory",
+            settings.steam_compat_tools_path.display().to_string(),
+        ),
+        (
+            "Global Wine Prefix",
+            "Default prefix for games without a specific one",
+            settings.wine_prefix_path.display().to_string(),
+        ),
+        (
+            "YAGO Storage Path",
+            "Where YAGO stores databases, metadata, and logs",
+            settings.yago_storage_path.display().to_string(),
+        ),
+        (
+            "Default Games Folder",
+            "Default location for new game installs",
+            settings.default_games_path.display().to_string(),
+        ),
+        (
+            "Mods Storage",
+            "Where YAGO stores and manages your mods",
+            settings.mods_path.display().to_string(),
+        ),
+        (
+            "Runners (Proton/Wine)",
+            "Folder for compatibility layers",
+            settings.runners_path.display().to_string(),
+        ),
+        (
+            "Game Prefixes",
+            "Base directory for game-specific prefixes",
+            settings.prefixes_path.display().to_string(),
+        ),
+        (
+            "Cache Directory",
+            "Temporary downloads and extracted files",
+            settings.cache_path.display().to_string(),
+        ),
     ];
 
     let field_keys = [
@@ -266,12 +315,7 @@ fn PathsTab() -> Element {
 }
 
 #[component]
-fn PathRow(
-    label: String,
-    description: String,
-    value: String,
-    field_key: String,
-) -> Element {
+fn PathRow(label: String, description: String, value: String, field_key: String) -> Element {
     let store = use_context::<Store>();
     let mut editing = use_signal(|| false);
     let mut local_val = use_signal(|| value.clone());
@@ -396,9 +440,7 @@ fn RunnersTab() -> Element {
     let core = store.core.clone();
     let mut runners = use_resource(move || {
         let core = core.clone();
-        async move {
-            core.list_runners().await.unwrap_or_default()
-        }
+        async move { core.list_runners().await.unwrap_or_default() }
     });
 
     let runner_list: Vec<String> = (runners)().unwrap_or_default();
@@ -536,8 +578,18 @@ fn ReposTab() -> Element {
     let mut local_val = use_signal(String::new);
 
     let repos = vec![
-        ("common_loader_repo", "Common Loader Repository", "GitHub repo for the mod loader framework", config.common_loader_repo.clone()),
-        ("proton_repo", "Proton Repository", "GitHub repo for GE-Proton builds", config.proton_repo.clone()),
+        (
+            "common_loader_repo",
+            "Common Loader Repository",
+            "GitHub repo for the mod loader framework",
+            config.common_loader_repo.clone(),
+        ),
+        (
+            "proton_repo",
+            "Proton Repository",
+            "GitHub repo for GE-Proton builds",
+            config.proton_repo.clone(),
+        ),
     ];
 
     let edit_key = (editing)();

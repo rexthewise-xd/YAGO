@@ -1,5 +1,6 @@
 pub mod assets;
 pub mod effects;
+pub mod gamebanana;
 pub mod github;
 pub mod loader;
 pub mod proton;
@@ -9,6 +10,10 @@ pub use assets::AssetCache;
 pub use effects::{
     detect_duplicate_effects, install_or_update_effect, read_texfx_config, write_texfx_config,
     EffectLibraryStatus, SharedEffectLibrary, TexFxConfig,
+};
+pub use gamebanana::{
+    game_id_to_gb_id, get_mod_detail, parse_yago_uri, search_mods, GbModDetail, GbModFile,
+    GbModSummary, YagoDeepLink,
 };
 
 use anyhow::{anyhow, Result};

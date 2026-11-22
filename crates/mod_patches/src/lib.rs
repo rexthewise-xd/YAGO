@@ -7,6 +7,7 @@ pub mod ini_merger;
 pub mod key_allocator;
 pub mod merger;
 pub mod namespacer;
+pub mod presets;
 pub mod validator;
 
 pub use buffer_allocator::BufferAllocator;
@@ -19,6 +20,10 @@ pub use fixer::{
 };
 pub use merger::Merger;
 pub use namespacer::Namespacer;
+pub use presets::{
+    apply_creditinfo_suppression, apply_ini_anchors, capture_from_d3dx_user,
+    extract_default_preset, inject_preset_bridge, IniAnchor, VariantPreset,
+};
 pub use validator::Validator;
 
 use serde::{Deserialize, Serialize};
@@ -36,6 +41,9 @@ pub struct ModProfile {
     pub mod_type: String,    // "character", "ui", "global", etc.
     pub nsfw: bool,
     pub tags: Vec<String>,
+    pub active_preset_vars: Option<HashMap<String, String>>,
+    pub ini_anchors: Vec<IniAnchor>,
+    pub suppress_creditinfo: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -325,6 +333,17 @@ pub fn process_global_mods(
             }
         }
 
+        // 3. Apply anchors & creditinfo suppression & preset bridge if present
+        if !profile.ini_anchors.is_empty() {
+            presets::apply_ini_anchors(&mut allocated_doc, &profile.ini_anchors);
+        }
+        if profile.suppress_creditinfo {
+            presets::apply_creditinfo_suppression(&mut allocated_doc);
+        }
+        if let Some(preset_vars) = &profile.active_preset_vars {
+            presets::inject_preset_bridge(&mut allocated_doc, preset_vars, &profile.uuid);
+        }
+
         // 3. Generate Output
         let output = compiler.serialize(&allocated_doc);
 
@@ -381,6 +400,9 @@ ps-t0 = ResourceEffect
             mod_type: "ui".to_string(),
             nsfw: false,
             tags: vec!["ui".to_string()],
+            active_preset_vars: None,
+            ini_anchors: vec![],
+            suppress_creditinfo: false,
         };
 
         let (files, _report) = process_global_mods(vec![global_mod]).unwrap();

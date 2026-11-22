@@ -131,6 +131,8 @@ impl AppCore {
             return Ok(ConflictReport::default());
         }
 
+        let suppress_global = self.global_settings.lock().await.suppress_creditinfo_global;
+
         let mut profiles_for_weaver = Vec::new();
         let mut add_to_list = |mod_id: &Uuid| {
             if let Some(record) = db.mods.get(mod_id) {
@@ -164,6 +166,21 @@ impl AppCore {
                     }
                 });
 
+                let active_preset_vars = record.config.active_preset_id.as_ref().and_then(|pid| {
+                    if pid == "default" {
+                        Some(mod_patches::extract_default_preset(&record.path).variables)
+                    } else {
+                        record
+                            .config
+                            .variant_presets
+                            .iter()
+                            .find(|p| p.id == *pid)
+                            .map(|p| p.variables.clone())
+                    }
+                });
+
+                let suppress_creditinfo = record.config.suppress_creditinfo || suppress_global;
+
                 profiles_for_weaver.push(mod_patches::ModProfile {
                     uuid: record.id.to_string(),
                     mod_root: record.path.clone(),
@@ -177,6 +194,9 @@ impl AppCore {
                         .iter()
                         .any(|t| t.to_lowercase() == "nsfw"),
                     tags: record.config.tags.clone(),
+                    active_preset_vars,
+                    ini_anchors: record.config.ini_anchors.clone(),
+                    suppress_creditinfo,
                 });
             }
         };

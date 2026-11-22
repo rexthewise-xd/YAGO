@@ -18,6 +18,8 @@ pub struct GlobalSettings {
     pub stream_safe: bool,
     pub nsfw_behavior: String, // "blur" | "hide"
     pub close_on_launch: bool,
+    #[serde(default)]
+    pub suppress_creditinfo_global: bool,
 }
 
 impl Default for GlobalSettings {
@@ -36,6 +38,7 @@ impl Default for GlobalSettings {
             stream_safe: true,
             nsfw_behavior: "blur".to_string(),
             close_on_launch: false,
+            suppress_creditinfo_global: false,
         }
     }
 }

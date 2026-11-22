@@ -1,5 +1,7 @@
 mod add_game;
+pub mod cover_manager;
 mod game_settings;
+pub mod gb_browser;
 mod import_staging;
 mod install_wizard;
 mod loadouts;
@@ -9,11 +11,11 @@ mod overview;
 mod settings;
 mod setup_wizard;
 pub mod skins;
-pub mod cover_manager;
 
 pub use add_game::AddGameModal;
 pub use cover_manager::CoverManagerModal;
 pub use game_settings::GameSettingsDrawer;
+pub use gb_browser::GameBananaBrowserModal;
 pub use install_wizard::InstallWizard;
 pub use loadouts::LoadoutsView;
 pub use mods::ModsView;

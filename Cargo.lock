@@ -5210,6 +5210,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "urlencoding",
  "vfs",
  "walkdir",
 ]
@@ -5830,6 +5831,7 @@ dependencies = [
  "dirs",
  "ini",
  "insta",
+ "mod_patches",
  "reqwest 0.12.28",
  "serde",
  "serde_json",

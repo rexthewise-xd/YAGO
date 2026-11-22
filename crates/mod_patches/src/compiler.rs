@@ -95,6 +95,21 @@ impl CycleCompiler {
 
             let mut unified_doc = Merger::merge_documents(processed_docs)?;
 
+            // Apply anchors, creditinfo suppression, and preset bridge
+            if !mod_profile.ini_anchors.is_empty() {
+                crate::presets::apply_ini_anchors(&mut unified_doc, &mod_profile.ini_anchors);
+            }
+            if mod_profile.suppress_creditinfo {
+                crate::presets::apply_creditinfo_suppression(&mut unified_doc);
+            }
+            if let Some(preset_vars) = &mod_profile.active_preset_vars {
+                crate::presets::inject_preset_bridge(
+                    &mut unified_doc,
+                    preset_vars,
+                    &mod_profile.uuid,
+                );
+            }
+
             // 3. Process Sections
             for section in &mut unified_doc.sections {
                 let name_lower = section.name.to_lowercase();
@@ -260,6 +275,9 @@ ps-t0 = ResourceAltDiffuse
             mod_type: "character".to_string(),
             nsfw: false,
             tags: vec![],
+            active_preset_vars: None,
+            ini_anchors: vec![],
+            suppress_creditinfo: false,
         };
 
         let mod2 = ModProfile {
@@ -271,6 +289,9 @@ ps-t0 = ResourceAltDiffuse
             mod_type: "character".to_string(),
             nsfw: false,
             tags: vec![],
+            active_preset_vars: None,
+            ini_anchors: vec![],
+            suppress_creditinfo: false,
         };
 
         let compiled = CycleCompiler::compile_character_group("Keqing", vec![mod1, mod2]).unwrap();

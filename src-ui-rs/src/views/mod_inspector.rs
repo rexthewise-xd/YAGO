@@ -1,6 +1,6 @@
 use dioxus::prelude::*;
 use uuid::Uuid;
-use yago_app::{FileNode, FixPreview};
+use yago_app::{FileNode, FixPreview, IniAnchor};
 
 use crate::components::Confirm;
 use crate::icons::{IconName, IconSvg};
@@ -53,6 +53,14 @@ pub fn ModInspector(
     let mut applying_fix = use_signal(|| false);
     let mut fix_preview = use_signal(|| None::<FixPreview>);
     let mut backup_refresh = use_signal(|| 0usize);
+    let mut capturing_keybind = use_signal(|| None::<String>);
+    let mut creating_preset = use_signal(|| false);
+    let mut new_preset_name = use_signal(String::new);
+    let mut preset_refresh = use_signal(|| 0usize);
+    let mut new_anchor_sec = use_signal(String::new);
+    let mut new_anchor_key = use_signal(String::new);
+    let mut new_anchor_val = use_signal(String::new);
+    let mut adding_anchor = use_signal(|| false);
 
     let sel = (selected_mod)();
     let record = sel.as_ref().and_then(|id| {
@@ -133,6 +141,19 @@ pub fn ModInspector(
         async move { core.has_mod_fix_backup(mid).await.unwrap_or(false) }
     });
     let has_backup = (has_backup_res)().unwrap_or(false);
+
+    let core_presets = store.core.clone();
+    let gid_presets = game_id.clone();
+    let mid_presets = mod_id.clone();
+    let p_trigger = (preset_refresh)();
+    let presets_res = use_resource(move || {
+        let core = core_presets.clone();
+        let gid = gid_presets.clone();
+        let mid = mid_presets.clone();
+        let _ = p_trigger;
+        async move { core.list_mod_presets(gid, mid).await.unwrap_or_default() }
+    });
+    let presets = (presets_res)().unwrap_or_default();
 
     rsx! {
         div { class: "inspector",
@@ -269,17 +290,378 @@ pub fn ModInspector(
 
                         if !record.config.keybinds.is_empty() {
                             div { class: "info-tags",
-                                div { class: "field-label mono", IconSvg { name: IconName::Settings, size: 13 } "KEYBINDS & CONTROLS" }
+                                div { class: "field-label mono", IconSvg { name: IconName::Settings, size: 13 } "KEYBINDS & CONTROLS (CLICK TO REBIND)" }
                                 div { class: "keybinds-list",
                                     for (kname, kb) in record.config.keybinds.iter() {
-                                        div { key: "{kname}", class: "keybind-row mono",
-                                            span { class: "keybind-badge", "[{kb.key}]" }
-                                            span { class: "keybind-label", "{kb.label}" }
-                                            if !kb.values.is_empty() {
-                                                span { class: "keybind-values", "({kb.values.join(\", \")})" }
+                                        {
+                                            let is_capturing = (capturing_keybind)().as_deref() == Some(kname.as_str());
+                                            let store = store.clone();
+                                            let gid = game_id.clone();
+                                            let mid = mod_id.clone();
+                                            let kname_clone = kname.clone();
+                                            let kb_label = kb.label.clone();
+                                            let kb_key = kb.key.clone();
+                                            let kb_values = kb.values.clone();
+
+                                            rsx! {
+                                                div { key: "{kname}", class: "keybind-row mono",
+                                                    button {
+                                                        class: if is_capturing { "keybind-badge capturing" } else { "keybind-badge" },
+                                                        autofocus: is_capturing,
+                                                        onclick: {
+                                                            let kname_click = kname_clone.clone();
+                                                            move |_| {
+                                                                if is_capturing {
+                                                                    capturing_keybind.set(None);
+                                                                } else {
+                                                                    capturing_keybind.set(Some(kname_click.clone()));
+                                                                }
+                                                            }
+                                                        },
+                                                        onkeydown: move |evt: KeyboardEvent| {
+                                                            if is_capturing {
+                                                                let key_code = evt.key();
+                                                                let raw_key = match key_code {
+                                                                    Key::Character(ref c) => c.clone(),
+                                                                    Key::ArrowUp => "up".to_string(),
+                                                                    Key::ArrowDown => "down".to_string(),
+                                                                    Key::ArrowLeft => "left".to_string(),
+                                                                    Key::ArrowRight => "right".to_string(),
+                                                                    _ => format!("{:?}", key_code).to_lowercase(),
+                                                                };
+                                                                let mut parts = Vec::new();
+                                                                if evt.modifiers().ctrl() { parts.push("ctrl"); }
+                                                                if evt.modifiers().alt() { parts.push("alt"); }
+                                                                if evt.modifiers().shift() { parts.push("shift"); }
+                                                                if !parts.contains(&raw_key.as_str()) {
+                                                                    parts.push(&raw_key);
+                                                                }
+                                                                let new_key_str = parts.join(" ");
+
+                                                                let core = store.core.clone();
+                                                                let gid = gid.clone();
+                                                                let mid = mid.clone();
+                                                                let label = kb_label.clone();
+                                                                let mut s = store.clone();
+                                                                spawn(async move {
+                                                                    match core.update_mod_keybind(gid, mid, label, new_key_str.clone()).await {
+                                                                        Ok(_) => s.toast(ToastKind::Success, format!("Keybind updated to [{new_key_str}]")),
+                                                                        Err(e) => s.toast(ToastKind::Error, e),
+                                                                    }
+                                                                    capturing_keybind.set(None);
+                                                                });
+                                                            }
+                                                        },
+                                                        if is_capturing { "Press key…" } else { "[{kb_key}]" }
+                                                    }
+                                                    span { class: "keybind-label", "{kb_label}" }
+                                                    if !kb_values.is_empty() {
+                                                        span { class: "keybind-values", "({kb_values.join(\", \")})" }
+                                                    }
+                                                }
                                             }
                                         }
                                     }
+                                }
+                            }
+                        }
+
+                        div { class: "info-tags",
+                            div { class: "field-label mono", IconSvg { name: IconName::Deploy, size: 13 } "VARIANT PRESETS" }
+                            div { class: "preset-pills",
+                                for p in presets.iter() {
+                                    {
+                                        let pid = p.id.clone();
+                                        let pname = p.name.clone();
+                                        let is_def = p.is_default;
+                                        let is_active = if let Some(active_id) = record.config.active_preset_id.as_deref() {
+                                            active_id == pid
+                                        } else {
+                                            is_def
+                                        };
+
+                                        let store = store.clone();
+                                        let gid = game_id.clone();
+                                        let mid = mod_id.clone();
+
+                                        rsx! {
+                                            span {
+                                                key: "{pid}",
+                                                class: if is_active { "preset-pill active" } else { "preset-pill" },
+                                                onclick: {
+                                                    let store = store.clone();
+                                                    let gid = gid.clone();
+                                                    let mid = mid.clone();
+                                                    let pid_act = pid.clone();
+                                                    move |_| {
+                                                        let core = store.core.clone();
+                                                        let gid = gid.clone();
+                                                        let mid = mid.clone();
+                                                        let target_id = if is_def { None } else { Some(pid_act.clone()) };
+                                                        let mut s = store.clone();
+                                                        spawn(async move {
+                                                            match core.activate_mod_preset(gid, mid, target_id).await {
+                                                                Ok(_) => preset_refresh.set(preset_refresh() + 1),
+                                                                Err(e) => s.toast(ToastKind::Error, e),
+                                                            }
+                                                        });
+                                                    }
+                                                },
+                                                "{pname}"
+                                                if !is_def {
+                                                    button {
+                                                        class: "preset-pill-x",
+                                                        title: "Delete preset",
+                                                        onclick: {
+                                                            let store = store.clone();
+                                                            let gid = gid.clone();
+                                                            let mid = mid.clone();
+                                                            let pid_del = pid.clone();
+                                                            move |e: MouseEvent| {
+                                                                e.stop_propagation();
+                                                                let core = store.core.clone();
+                                                                let gid = gid.clone();
+                                                                let mid = mid.clone();
+                                                                let pid = pid_del.clone();
+                                                                let mut s = store.clone();
+                                                                spawn(async move {
+                                                                    match core.delete_mod_preset(gid, mid, pid).await {
+                                                                        Ok(_) => preset_refresh.set(preset_refresh() + 1),
+                                                                        Err(err) => s.toast(ToastKind::Error, err),
+                                                                    }
+                                                                });
+                                                            }
+                                                        },
+                                                        IconSvg { name: IconName::Close, size: 10 }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if (creating_preset)() {
+                                    input {
+                                        class: "input tag-input",
+                                        r#type: "text",
+                                        placeholder: "Preset name...",
+                                        autofocus: true,
+                                        value: "{(new_preset_name)()}",
+                                        oninput: move |e| new_preset_name.set(e.value()),
+                                        onblur: move |_| creating_preset.set(false),
+                                        onkeydown: {
+                                            let store = store.clone();
+                                            let gid = game_id.clone();
+                                            let mid = mod_id.clone();
+                                            move |evt: KeyboardEvent| {
+                                                if evt.key() == Key::Enter {
+                                                    let name = (new_preset_name)().trim().to_string();
+                                                    if !name.is_empty() {
+                                                        let core = store.core.clone();
+                                                        let gid = gid.clone();
+                                                        let mid = mid.clone();
+                                                        let mut s = store.clone();
+                                                        spawn(async move {
+                                                            match core.save_mod_preset(gid, mid, name, None).await {
+                                                                Ok(_) => {
+                                                                    s.toast(ToastKind::Success, "Preset captured from d3dx_user.ini");
+                                                                    preset_refresh.set(preset_refresh() + 1);
+                                                                }
+                                                                Err(e) => s.toast(ToastKind::Error, e),
+                                                            }
+                                                        });
+                                                    }
+                                                    new_preset_name.set(String::new());
+                                                    creating_preset.set(false);
+                                                }
+                                            }
+                                        },
+                                    }
+                                } else {
+                                    button {
+                                        class: "btn btn-sm",
+                                        title: "Capture current live settings from d3dx_user.ini as a new preset",
+                                        onclick: move |_| creating_preset.set(true),
+                                        IconSvg { name: IconName::Add, size: 12 }
+                                        "CAPTURE CURRENT"
+                                    }
+                                }
+                            }
+                        }
+
+                        div { class: "info-tags",
+                            div { style: "display: flex; align-items: center; justify-content: space-between;",
+                                div { class: "field-label mono", IconSvg { name: IconName::Settings, size: 13 } "INI ANCHORS & BANNER SUPPRESSION" }
+                                button {
+                                    class: if record.config.suppress_creditinfo { "toggle-switch on" } else { "toggle-switch" },
+                                    title: "Suppress $creditinfo on-screen banners for this mod",
+                                    onclick: {
+                                        let store = store.clone();
+                                        let gid = game_id.clone();
+                                        let mid = mod_id.clone();
+                                        let anchors = record.config.ini_anchors.clone();
+                                        let current_val = record.config.suppress_creditinfo;
+                                        move |_| {
+                                            let core = store.core.clone();
+                                            let gid = gid.clone();
+                                            let mid = mid.clone();
+                                            let anchors = anchors.clone();
+                                            let mut s = store.clone();
+                                            spawn(async move {
+                                                let _ = core.update_mod_anchors(gid, mid, anchors, !current_val).await;
+                                                s.toast(ToastKind::Success, if !current_val { "$creditinfo suppressed" } else { "$creditinfo restored" });
+                                            });
+                                        }
+                                    },
+                                    div { class: "toggle-knob" }
+                                }
+                            }
+                            div { style: "font-size: 10px; color: var(--text-sec); margin-top: 2px;",
+                                "Suppress on-screen $creditinfo banners or pin permanent [Section] key = value overrides"
+                            }
+
+                            if !record.config.ini_anchors.is_empty() {
+                                div { class: "anchors-list",
+                                    for (idx, anchor) in record.config.ini_anchors.iter().enumerate() {
+                                        {
+                                            let store = store.clone();
+                                            let gid = game_id.clone();
+                                            let mid = mod_id.clone();
+                                            let all_anchors = record.config.ini_anchors.clone();
+                                            let suppress = record.config.suppress_creditinfo;
+                                            let a_sec = anchor.section.clone();
+                                            let a_key = anchor.key.clone();
+                                            let a_val = anchor.value.clone();
+                                            let a_en = anchor.enabled;
+
+                                            rsx! {
+                                                div { key: "{idx}", class: "anchor-row mono",
+                                                    div { class: "anchor-info",
+                                                        button {
+                                                            class: if a_en { "toggle-switch on" } else { "toggle-switch" },
+                                                            style: "transform: scale(0.8);",
+                                                            onclick: {
+                                                                let store = store.clone();
+                                                                let gid = gid.clone();
+                                                                let mid = mid.clone();
+                                                                let mut next_anchors = all_anchors.clone();
+                                                                move |_| {
+                                                                    next_anchors[idx].enabled = !next_anchors[idx].enabled;
+                                                                    let core = store.core.clone();
+                                                                    let gid = gid.clone();
+                                                                    let mid = mid.clone();
+                                                                    let na = next_anchors.clone();
+                                                                    spawn(async move {
+                                                                        let _ = core.update_mod_anchors(gid, mid, na, suppress).await;
+                                                                    });
+                                                                }
+                                                            },
+                                                            div { class: "toggle-knob" }
+                                                        }
+                                                        span { style: "color: var(--accent);", "[{a_sec}]" }
+                                                        span { "{a_key} = {a_val}" }
+                                                    }
+                                                    button {
+                                                        class: "icon-btn icon-danger",
+                                                        title: "Remove anchor",
+                                                        onclick: {
+                                                            let store = store.clone();
+                                                            let gid = gid.clone();
+                                                            let mid = mid.clone();
+                                                            let mut next_anchors = all_anchors.clone();
+                                                            move |_| {
+                                                                next_anchors.remove(idx);
+                                                                let core = store.core.clone();
+                                                                let gid = gid.clone();
+                                                                let mid = mid.clone();
+                                                                let na = next_anchors.clone();
+                                                                spawn(async move {
+                                                                    let _ = core.update_mod_anchors(gid, mid, na, suppress).await;
+                                                                });
+                                                            }
+                                                        },
+                                                        IconSvg { name: IconName::Trash, size: 13 }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            if (adding_anchor)() {
+                                div { style: "display: flex; gap: 6px; margin-top: 6px; align-items: center; flex-wrap: wrap;",
+                                    input {
+                                        class: "input",
+                                        style: "flex: 1; min-width: 90px; font-size: 11px;",
+                                        placeholder: "Section (e.g. TextureOverrideBody)",
+                                        value: "{(new_anchor_sec)()}",
+                                        oninput: move |e| new_anchor_sec.set(e.value()),
+                                    }
+                                    input {
+                                        class: "input",
+                                        style: "flex: 1; min-width: 70px; font-size: 11px;",
+                                        placeholder: "Key (e.g. filter_index)",
+                                        value: "{(new_anchor_key)()}",
+                                        oninput: move |e| new_anchor_key.set(e.value()),
+                                    }
+                                    input {
+                                        class: "input",
+                                        style: "flex: 1; min-width: 60px; font-size: 11px;",
+                                        placeholder: "Value (e.g. 1)",
+                                        value: "{(new_anchor_val)()}",
+                                        oninput: move |e| new_anchor_val.set(e.value()),
+                                    }
+                                    button {
+                                        class: "btn btn-sm btn-accent",
+                                        onclick: {
+                                            let store = store.clone();
+                                            let gid = game_id.clone();
+                                            let mid = mod_id.clone();
+                                            let mut all_anchors = record.config.ini_anchors.clone();
+                                            let suppress = record.config.suppress_creditinfo;
+                                            move |_| {
+                                                let sec = (new_anchor_sec)().trim().to_string();
+                                                let k = (new_anchor_key)().trim().to_string();
+                                                let v = (new_anchor_val)().trim().to_string();
+                                                if !sec.is_empty() && !k.is_empty() {
+                                                    all_anchors.push(IniAnchor {
+                                                        section: sec,
+                                                        key: k,
+                                                        value: v,
+                                                        enabled: true,
+                                                    });
+                                                    let core = store.core.clone();
+                                                    let gid = gid.clone();
+                                                    let mid = mid.clone();
+                                                    let na = all_anchors.clone();
+                                                    let mut s = store.clone();
+                                                    spawn(async move {
+                                                        let _ = core.update_mod_anchors(gid, mid, na, suppress).await;
+                                                        s.toast(ToastKind::Success, "Anchor added");
+                                                    });
+                                                    new_anchor_sec.set(String::new());
+                                                    new_anchor_key.set(String::new());
+                                                    new_anchor_val.set(String::new());
+                                                    adding_anchor.set(false);
+                                                }
+                                            }
+                                        },
+                                        "SAVE"
+                                    }
+                                    button {
+                                        class: "btn btn-sm",
+                                        onclick: move |_| adding_anchor.set(false),
+                                        "CANCEL"
+                                    }
+                                }
+                            } else {
+                                button {
+                                    class: "btn btn-sm",
+                                    style: "margin-top: 6px;",
+                                    onclick: move |_| adding_anchor.set(true),
+                                    IconSvg { name: IconName::Add, size: 12 }
+                                    "ADD INI ANCHOR"
                                 }
                             }
                         }

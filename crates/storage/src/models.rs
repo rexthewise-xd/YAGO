@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+pub use mod_patches::{IniAnchor, VariantPreset};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -129,6 +130,10 @@ pub struct ModMetadata {
     pub preview_image: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
+    #[serde(default)]
+    pub gb_mod_id: Option<u64>,
+    #[serde(default)]
+    pub gb_date_updated: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -140,7 +145,7 @@ pub struct ModCompatibility {
     pub fingerprint: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct ModConfig {
     #[serde(default)]
     pub mod_type: Option<String>, // "character", "ui", "global", etc.
@@ -148,6 +153,14 @@ pub struct ModConfig {
     pub tags: Vec<String>,
     #[serde(default)]
     pub keybinds: HashMap<String, Keybind>,
+    #[serde(default)]
+    pub variant_presets: Vec<VariantPreset>,
+    #[serde(default)]
+    pub active_preset_id: Option<String>,
+    #[serde(default)]
+    pub ini_anchors: Vec<IniAnchor>,
+    #[serde(default)]
+    pub suppress_creditinfo: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

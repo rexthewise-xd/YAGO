@@ -13,6 +13,8 @@ meta:
   url: ~
   preview_image: ~
   description: A high-fidelity variant for the Sovereign.
+  gb_mod_id: ~
+  gb_date_updated: ~
 compatibility:
   game: genshin
   character: raiden
@@ -25,5 +27,9 @@ config:
     - raiden
     - nsfw
   keybinds: {}
+  variant_presets: []
+  active_preset_id: ~
+  ini_anchors: []
+  suppress_creditinfo: false
 enabled: true
 added_at: "[timestamp]"

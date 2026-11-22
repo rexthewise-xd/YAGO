@@ -16,6 +16,8 @@ mod tests {
             url: None,
             preview_image: None,
             description: Some("A high-fidelity variant for the Sovereign.".to_string()),
+            gb_mod_id: None,
+            gb_date_updated: None,
         };
 
         let compatibility = ModCompatibility {
@@ -29,6 +31,7 @@ mod tests {
             mod_type: Some("character".to_string()),
             tags: vec!["raiden".to_string(), "nsfw".to_string()],
             keybinds: HashMap::new(),
+            ..Default::default()
         };
 
         let record = ModRecord {

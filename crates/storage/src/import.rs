@@ -390,6 +390,7 @@ impl Importer {
             mod_type: Some(mod_type.clone()),
             tags: vec![mod_type.clone(), topology],
             keybinds: Self::harvest_keybinds(&target_path),
+            ..Default::default()
         };
 
         if character != "Unknown" && !config.tags.contains(&character) {
@@ -815,6 +816,8 @@ impl Importer {
             url: None,
             preview_image: None,
             description: Some(format!("Generated from {}", filename)),
+            gb_mod_id: None,
+            gb_date_updated: None,
         }
     }
 }

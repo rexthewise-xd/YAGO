@@ -7,8 +7,8 @@ use crate::components::{ActivityPanel, Rail, StatusBar, Toasts, TopStrip};
 use crate::icons::{IconName, IconSvg};
 use crate::state::{Overlay, Store, View};
 use crate::views::{
-    AddGameModal, CoverManagerModal, InstallWizard, LoadoutsView, ModsView, Overview,
-    SettingsView, SetupWizard, SkinsView,
+    AddGameModal, CoverManagerModal, InstallWizard, LoadoutsView, ModsView, Overview, SettingsView,
+    SetupWizard, SkinsView,
 };
 
 static THEME_CSS: Asset = asset!("/assets/theme.css");
@@ -63,6 +63,44 @@ pub fn App() -> Element {
             spawn(async move {
                 let _ = core.trigger_panic().await;
             });
+        });
+    }
+
+    {
+        let store = store.clone();
+        use_future(move || {
+            let mut store = store.clone();
+            async move {
+                let deep_link = std::env::args().find(|a| a.starts_with("yago://"));
+                if let Some(uri) = deep_link {
+                    let mut attempts = 0;
+                    while store.selected_game().is_none() && attempts < 30 {
+                        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                        attempts += 1;
+                    }
+                    if let Some(game) = store.selected_game() {
+                        let core = store.core.clone();
+                        store.toast(
+                            crate::state::ToastKind::Info,
+                            "Processing 1-Click mod install deep link...",
+                        );
+                        match core.handle_deep_link(game.id.clone(), uri).await {
+                            Ok(rec) => {
+                                store.toast(
+                                    crate::state::ToastKind::Success,
+                                    format!("Installed {} via 1-Click", rec.meta.name),
+                                );
+                            }
+                            Err(e) => {
+                                store.toast(
+                                    crate::state::ToastKind::Error,
+                                    format!("1-Click install failed: {e}"),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
         });
     }
 

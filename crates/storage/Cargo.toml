@@ -20,6 +20,7 @@ sync = { path = "../sync" }
 ini = { path = "../ini" }
 tempfile = "3.13"
 zip = { version = "2.2.2", features = ["deflate"] }
+mod_patches = { path = "../mod_patches" }
 
 [dev-dependencies]
 insta = { version = "1.46.3", features = ["redactions", "yaml"] }

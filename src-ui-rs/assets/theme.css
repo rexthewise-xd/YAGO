@@ -2307,6 +2307,18 @@ option:hover {
   font-weight: 600;
   font-size: 10px;
 }
+button.keybind-badge {
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+button.keybind-badge:hover {
+  border-color: var(--accent);
+}
+button.keybind-badge.capturing {
+  border-color: var(--accent);
+  background: rgba(34, 211, 238, 0.2);
+  color: #fff;
+}
 .keybind-label {
   color: var(--text);
   font-weight: 500;
@@ -2314,6 +2326,159 @@ option:hover {
 .keybind-values {
   color: var(--muted);
   font-size: 10px;
+}
+
+/* ─── Variant Presets & INI Anchors ──────────────────────────────── */
+.preset-pills {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-top: 6px;
+}
+.preset-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  font-size: 11px;
+  cursor: pointer;
+  color: var(--text-sec);
+  transition: all 0.15s;
+}
+.preset-pill:hover {
+  border-color: var(--text-sec);
+  color: var(--text);
+}
+.preset-pill.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(34, 211, 238, 0.12);
+  font-weight: 600;
+}
+.preset-pill-x {
+  opacity: 0.6;
+  cursor: pointer;
+  padding: 0 2px;
+}
+.preset-pill-x:hover {
+  opacity: 1;
+  color: var(--danger);
+}
+.anchors-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+.anchor-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-size: 11px;
+}
+.anchor-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ─── GameBanana Browser ─────────────────────────────────────────── */
+.gb-browser-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.gb-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 12px;
+  max-height: 520px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.gb-card {
+  display: flex;
+  flex-direction: column;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+  transition: border-color 0.15s ease;
+}
+.gb-card:hover {
+  border-color: var(--border-hover);
+}
+.gb-card-thumb {
+  width: 100%;
+  height: 110px;
+  background: #000;
+  position: relative;
+  overflow: hidden;
+}
+.gb-card-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.gb-thumb-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  background: var(--bg);
+}
+.gb-card-info {
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+}
+.gb-card-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gb-card-author {
+  font-size: 10px;
+  color: var(--muted);
+}
+.gb-card-stats {
+  display: flex;
+  gap: 8px;
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.gb-card-install {
+  margin: 0 10px 10px 10px;
+}
+.update-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  background: rgba(34, 211, 238, 0.15);
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
 }
 
 

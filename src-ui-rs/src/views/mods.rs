@@ -2,6 +2,7 @@ use dioxus::html::HasFileData;
 use dioxus::prelude::*;
 use storage::models::{ImportCandidate, ModRecord};
 use uuid::Uuid;
+use yago_app::ModUpdateInfo;
 
 use crate::components::Confirm;
 use crate::icons::{IconName, IconSvg};
@@ -10,6 +11,7 @@ use crate::picker::{pick_file, pick_folder};
 use crate::state::{Store, ToastKind};
 use crate::views::import_staging::ImportStaging;
 use crate::views::mod_inspector::ModInspector;
+use crate::views::GameBananaBrowserModal;
 
 #[derive(Clone, Copy, PartialEq)]
 enum ViewMode {
@@ -31,6 +33,10 @@ pub fn ModsView() -> Element {
     let mut staging = use_signal(|| None::<Vec<ImportCandidate>>);
     let mut confirm_delete = use_signal(|| None::<(String, String)>);
     let mut is_dragging_over = use_signal(|| false);
+    let mut show_gb_browser = use_signal(|| false);
+    let mut checking_updates = use_signal(|| false);
+    let mut available_updates = use_signal(std::collections::HashMap::<String, ModUpdateInfo>::new);
+    let mut updating_mod = use_signal(|| None::<String>);
 
     let Some(game) = store.selected_game() else {
         return rsx! {
@@ -283,6 +289,49 @@ pub fn ModsView() -> Element {
                     }
                     button {
                         class: "btn",
+                        disabled: (checking_updates)(),
+                        title: "Check GameBanana for mod updates",
+                        onclick: {
+                            let store = store.clone();
+                            let gid = game_id.clone();
+                            move |_| {
+                                let core = store.core.clone();
+                                let gid = gid.clone();
+                                let mut s = store.clone();
+                                spawn(async move {
+                                    checking_updates.set(true);
+                                    match core.check_mod_updates(gid).await {
+                                        Ok(updates) => {
+                                            let count = updates.len();
+                                            let map: std::collections::HashMap<String, ModUpdateInfo> = updates
+                                                .into_iter()
+                                                .map(|u| (u.mod_uuid.clone(), u))
+                                                .collect();
+                                            available_updates.set(map);
+                                            if count > 0 {
+                                                s.toast(ToastKind::Info, format!("Found {count} mod update(s)"));
+                                            } else {
+                                                s.toast(ToastKind::Success, "All mods are up-to-date");
+                                            }
+                                        }
+                                        Err(e) => s.toast(ToastKind::Error, e),
+                                    }
+                                    checking_updates.set(false);
+                                });
+                            }
+                        },
+                        IconSvg { name: IconName::Refresh, size: 15 }
+                        if (checking_updates)() { "CHECKING…" } else { "CHECK UPDATES" }
+                    }
+                    button {
+                        class: "btn btn-accent",
+                        title: "Browse and install mods from GameBanana",
+                        onclick: move |_| show_gb_browser.set(true),
+                        IconSvg { name: IconName::Search, size: 15 }
+                        "BROWSE GAMEBANANA"
+                    }
+                    button {
+                        class: "btn",
                         disabled: is_redeploying,
                         title: "Reload mods in-game",
                         onclick: {
@@ -338,6 +387,9 @@ pub fn ModsView() -> Element {
                                 {
                                     let store = store.clone();
                                     let game_id = game_id.clone();
+                                    let mid_str = m.id.to_string();
+                                    let has_update = available_updates().contains_key(&mid_str);
+                                    let is_updating = updating_mod().as_deref() == Some(&mid_str);
                                     let has_conflict = char_counts.get(&m.compatibility.character).copied().unwrap_or(0) > 1;
                                     rsx! {
                                         ModRow {
@@ -351,6 +403,32 @@ pub fn ModsView() -> Element {
                                             dev_mode: dev,
                                             stream_safe,
                                             has_conflict,
+                                            has_update,
+                                            is_updating,
+                                            onupdate: {
+                                                let store = store.clone();
+                                                let gid = game_id.clone();
+                                                let mid = mid_str.clone();
+                                                move |_| {
+                                                    let core = store.core.clone();
+                                                    let gid = gid.clone();
+                                                    let mid = mid.clone();
+                                                    let mut s = store.clone();
+                                                    spawn(async move {
+                                                        updating_mod.set(Some(mid.clone()));
+                                                        match core.update_mod_from_gamebanana(gid, mid.clone()).await {
+                                                            Ok(rec) => {
+                                                                s.toast(ToastKind::Success, format!("Updated {}", rec.meta.name));
+                                                                let mut map = available_updates();
+                                                                map.remove(&mid);
+                                                                available_updates.set(map);
+                                                            }
+                                                            Err(e) => s.toast(ToastKind::Error, e),
+                                                        }
+                                                        updating_mod.set(None);
+                                                    });
+                                                }
+                                            },
                                             onselect: move |id: String| selected_mod.set(Some(id)),
                                             ontoggle: {
                                                 let store = store.clone();
@@ -402,6 +480,8 @@ pub fn ModsView() -> Element {
                             {
                                 let store = store.clone();
                                 let game_id = game_id.clone();
+                                let mid_str = m.id.to_string();
+                                let has_update = available_updates().contains_key(&mid_str);
                                 rsx! {
                                     GridModCard {
                                         key: "{m.id}",
@@ -409,6 +489,7 @@ pub fn ModsView() -> Element {
                                         enabled: *en,
                                         selected: selected.as_deref() == Some(m.id.to_string().as_str()),
                                         stream_safe,
+                                        has_update,
                                         onselect: move |id: String| selected_mod.set(Some(id)),
                                         ontoggle: {
                                             let store = store.clone();
@@ -425,6 +506,13 @@ pub fn ModsView() -> Element {
                             }
                         }
                     }
+                }
+            }
+
+            if (show_gb_browser)() {
+                GameBananaBrowserModal {
+                    game_id: game_id.clone(),
+                    onclose: move |_| show_gb_browser.set(false),
                 }
             }
 
@@ -546,6 +634,9 @@ fn ModRow(
     dev_mode: bool,
     stream_safe: bool,
     #[props(default)] has_conflict: bool,
+    #[props(default)] has_update: bool,
+    #[props(default)] is_updating: bool,
+    #[props(default)] onupdate: Option<EventHandler<()>>,
     onselect: EventHandler<String>,
     ontoggle: EventHandler<(String, bool)>,
     onmove: EventHandler<(String, MoveDir)>,
@@ -602,6 +693,9 @@ fn ModRow(
                     if has_conflict && enabled {
                         span { class: "char-badge accent", title: "Multiple mods active for this character — resolved by load order", "CYCLE" }
                     }
+                    if has_update {
+                        span { class: "update-badge", "UPDATE AVAILABLE" }
+                    }
                 }
             }
 
@@ -635,6 +729,19 @@ fn ModRow(
             }
 
             div { class: "mod-row-actions",
+                if has_update {
+                    if let Some(onup) = onupdate {
+                        button {
+                            class: "btn btn-sm btn-accent",
+                            disabled: is_updating,
+                            onclick: move |evt: Event<MouseData>| {
+                                evt.stop_propagation();
+                                onup.call(());
+                            },
+                            if is_updating { "UPDATING…" } else { "UPDATE" }
+                        }
+                    }
+                }
                 if dev_mode {
                     button {
                         class: "icon-btn icon-danger",
@@ -662,6 +769,7 @@ fn GridModCard(
     enabled: bool,
     selected: bool,
     stream_safe: bool,
+    #[props(default)] has_update: bool,
     onselect: EventHandler<String>,
     ontoggle: EventHandler<(String, bool)>,
 ) -> Element {
@@ -687,6 +795,13 @@ fn GridModCard(
             div { class: "grid-card-img",
                 img { class: if blur { "blurred" } else { "" }, src: "{preview}", alt: "" }
                 div { class: "grid-card-shade" }
+                if has_update {
+                    span {
+                        style: "position: absolute; top: 6px; left: 6px; z-index: 5;",
+                        class: "update-badge",
+                        "UPDATE"
+                    }
+                }
                 button {
                     class: if enabled { "switch on grid-switch" } else { "switch grid-switch" },
                     onclick: {
