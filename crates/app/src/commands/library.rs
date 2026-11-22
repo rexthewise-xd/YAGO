@@ -211,6 +211,7 @@ impl AppCore {
                 .clone()
                 .unwrap_or_default(),
             remote_info: None,
+            enabled_effects: vec![],
         };
 
         let mut db = LibraryDatabase::default();
@@ -326,7 +327,9 @@ impl AppCore {
         let db = dbs
             .get(&game_id)
             .ok_or_else(|| format!("Game {} not found", game_id))?;
-        Ok(storage::queries::Queries::get_character_roster(db, &game_id))
+        Ok(storage::queries::Queries::get_character_roster(
+            db, &game_id,
+        ))
     }
 
     pub async fn open_path(&self, path: String) -> Result<(), String> {
@@ -656,7 +659,11 @@ impl AppCore {
             return Err("Path does not exist".to_string());
         }
 
-        Ok(storage::scanner::recursive_scan(&path_buf, &templates_vec, 4))
+        Ok(storage::scanner::recursive_scan(
+            &path_buf,
+            &templates_vec,
+            4,
+        ))
     }
 
     pub async fn trust_game_installation(&self, game_id: String) -> Result<(), String> {
@@ -910,6 +917,56 @@ impl AppCore {
         }
 
         Ok(())
+    }
+
+    pub async fn sync_hash_db(&self, game_id: String) -> Result<usize, String> {
+        let url = {
+            let templates = self.game_templates.lock().await;
+            templates
+                .get(&game_id)
+                .or_else(|| templates.get(game_id.trim_end_matches(".exe")))
+                .and_then(|t| t.hash_db_url.clone())
+        };
+
+        let url = match url {
+            Some(u) => u,
+            None => {
+                let dbs = self.game_dbs.lock().await;
+                dbs.get(&game_id)
+                    .and_then(|db| db.games.get(&game_id))
+                    .and_then(|c| c.hash_db_url.clone())
+                    .ok_or_else(|| {
+                        format!("No hash database URL configured for game '{}'", game_id)
+                    })?
+            }
+        };
+
+        let hashes = storage::cloud::CloudSync::fetch_latest_hashes(&url)
+            .await
+            .map_err(|e| format!("Failed to fetch remote hashes: {}", e))?;
+
+        let count = if let Some(chars) = hashes.get("characters").and_then(|c| c.as_object()) {
+            chars.len()
+        } else if let Some(map) = hashes.as_object() {
+            map.len()
+        } else {
+            0
+        };
+
+        let librarian = self.librarian.lock().await;
+        let hashes_dir = librarian.assets_root.join("hashes");
+        if !hashes_dir.exists() {
+            std::fs::create_dir_all(&hashes_dir).map_err(|e| e.to_string())?;
+        }
+
+        let target_file = hashes_dir.join(format!("{}.json", game_id));
+        let tmp_file = hashes_dir.join(format!("{}.json.tmp.{}", game_id, uuid::Uuid::new_v4()));
+
+        let json_str = serde_json::to_string_pretty(&hashes).map_err(|e| e.to_string())?;
+        std::fs::write(&tmp_file, json_str).map_err(|e| e.to_string())?;
+        std::fs::rename(&tmp_file, &target_file).map_err(|e| e.to_string())?;
+
+        Ok(count)
     }
 }
 

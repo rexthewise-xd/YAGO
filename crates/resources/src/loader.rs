@@ -1,8 +1,8 @@
 use crate::download_file;
 use crate::github;
 use anyhow::{anyhow, Result};
-use vfs::archive::extract_and_sanitize;
 use std::path::Path;
+use vfs::archive::extract_and_sanitize;
 
 pub async fn update_loader<F>(
     owner: &str,

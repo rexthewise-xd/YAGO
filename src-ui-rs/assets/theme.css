@@ -740,6 +740,16 @@ option:hover {
   color: var(--text);
   letter-spacing: 1px;
 }
+
+.effect-warning-banner {
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  color: #f87171;
+  padding: 8px 12px;
+  font-size: 11px;
+  margin-top: 6px;
+  border-radius: 2px;
+}
 .mods-header {
   display: flex;
   align-items: center;

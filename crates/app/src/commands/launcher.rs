@@ -190,12 +190,21 @@ impl AppCore {
                 add_to_list(mid);
             }
         }
-        let (plan, report) =
-            mod_patches::generate_deployment_plan(profiles_for_weaver).map_err(|e| e.to_string())?;
+        let (mut plan, report) = mod_patches::generate_deployment_plan(profiles_for_weaver)
+            .map_err(|e| e.to_string())?;
 
         let lib_guard = self.librarian.lock().await;
         let paths = lib_guard.game_paths(&game_id);
         let loaders_root = lib_guard.loaders_root.clone();
+
+        // Include enabled and installed shared effect libraries in the deployment plan
+        for eff_id in &config.enabled_effects {
+            let effect_dir = lib_guard.assets_root.join("effects").join(eff_id);
+            if effect_dir.exists() {
+                let target_rel = PathBuf::from("00_Configs").join("Effects").join(eff_id);
+                plan.symlink_map.push((effect_dir, target_rel));
+            }
+        }
 
         let profile_dir = paths.profile_mods.parent().ok_or("Invalid profile path")?;
         if !profile_dir.exists() {
@@ -421,7 +430,9 @@ impl AppCore {
                     storage::InjectionMethod::None => launcher::InjectionMethod::None,
                     storage::InjectionMethod::Proxy => launcher::InjectionMethod::Proxy,
                     storage::InjectionMethod::Loader => launcher::InjectionMethod::Loader,
-                    storage::InjectionMethod::RemoteThread => launcher::InjectionMethod::RemoteThread,
+                    storage::InjectionMethod::RemoteThread => {
+                        launcher::InjectionMethod::RemoteThread
+                    }
                     storage::InjectionMethod::ManualMap => launcher::InjectionMethod::ManualMap,
                 }
             } else {

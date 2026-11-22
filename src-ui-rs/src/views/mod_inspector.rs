@@ -1,6 +1,6 @@
 use dioxus::prelude::*;
 use uuid::Uuid;
-use yago_app::FileNode;
+use yago_app::{FileNode, FixPreview};
 
 use crate::components::Confirm;
 use crate::icons::{IconName, IconSvg};
@@ -49,6 +49,10 @@ pub fn ModInspector(
     let mut adding_tag = use_signal(|| false);
     let mut new_tag = use_signal(String::new);
     let mut confirm_delete = use_signal(|| false);
+    let mut previewing_fix = use_signal(|| false);
+    let mut applying_fix = use_signal(|| false);
+    let mut fix_preview = use_signal(|| None::<FixPreview>);
+    let mut backup_refresh = use_signal(|| 0usize);
 
     let sel = (selected_mod)();
     let record = sel.as_ref().and_then(|id| {
@@ -73,6 +77,7 @@ pub fn ModInspector(
         let _ = (selected_mod)();
         active_file.set(None);
         content.set(String::new());
+        fix_preview.set(None);
     });
 
     let Some(record) = record else {
@@ -117,6 +122,17 @@ pub fn ModInspector(
     let confirm_mid = mod_id.clone();
     let confirm_name = record.meta.name.clone();
     let confirm_store = store.clone();
+
+    let core_backup = store.core.clone();
+    let mod_id_backup = mod_id.clone();
+    let b_trigger = (backup_refresh)();
+    let has_backup_res = use_resource(move || {
+        let core = core_backup.clone();
+        let mid = mod_id_backup.clone();
+        let _ = b_trigger;
+        async move { core.has_mod_fix_backup(mid).await.unwrap_or(false) }
+    });
+    let has_backup = (has_backup_res)().unwrap_or(false);
 
     rsx! {
         div { class: "inspector",
@@ -278,6 +294,151 @@ pub fn ModInspector(
                                 div { class: "info-tool-box",
                                     div { class: "info-tool-title mono", IconSvg { name: IconName::Info, size: 13 } "GLOBAL UI PROTOCOL" }
                                     p { "Persistent UI enhancement. Bypasses character gates." }
+                                }
+                            }
+
+                            div { class: "info-tool-box",
+                                div { class: "info-tool-title mono", IconSvg { name: IconName::Settings, size: 13 } "PATCH FIXER ENGINE" }
+                                p { "Apply data-driven model shader patches (ORFix, FaceFix, slot remaps & hash migrations)." }
+
+                                div { style: "display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap;",
+                                    button {
+                                        class: "btn btn-sm",
+                                        disabled: (previewing_fix)() || (applying_fix)(),
+                                        onclick: {
+                                            let store = store.clone();
+                                            let gid = game_id.clone();
+                                            let mid = mod_id.clone();
+                                            move |_| {
+                                                let core = store.core.clone();
+                                                let gid = gid.clone();
+                                                let mid = mid.clone();
+                                                let mut s = store.clone();
+                                                spawn(async move {
+                                                    previewing_fix.set(true);
+                                                    match core.preview_mod_fix(gid, mid).await {
+                                                        Ok(prev) => {
+                                                            if !prev.has_changes() {
+                                                                s.toast(ToastKind::Info, "No patch fixes needed (mod is already up-to-date)");
+                                                            }
+                                                            fix_preview.set(Some(prev));
+                                                        }
+                                                        Err(e) => s.toast(ToastKind::Error, e),
+                                                    }
+                                                    previewing_fix.set(false);
+                                                });
+                                            }
+                                        },
+                                        IconSvg { name: IconName::Search, size: 13 }
+                                        if (previewing_fix)() { "ANALYZING…" } else { "PREVIEW FIX" }
+                                    }
+
+                                    if has_backup {
+                                        button {
+                                            class: "btn btn-sm",
+                                            disabled: (applying_fix)(),
+                                            onclick: {
+                                                let store = store.clone();
+                                                let mid = mod_id.clone();
+                                                move |_| {
+                                                    let core = store.core.clone();
+                                                    let mid = mid.clone();
+                                                    let mut s = store.clone();
+                                                    spawn(async move {
+                                                        applying_fix.set(true);
+                                                        match core.rollback_mod_fix(mid).await {
+                                                            Ok(count) => {
+                                                                s.toast(ToastKind::Success, format!("Restored {count} file(s) from backup"));
+                                                                fix_preview.set(None);
+                                                                backup_refresh.set(backup_refresh() + 1);
+                                                            }
+                                                            Err(e) => s.toast(ToastKind::Error, e),
+                                                        }
+                                                        applying_fix.set(false);
+                                                    });
+                                                }
+                                            },
+                                            IconSvg { name: IconName::Refresh, size: 13 }
+                                            "ROLLBACK LAST FIX"
+                                        }
+                                    }
+                                }
+
+                                if let Some(prev) = (fix_preview)() {
+                                    div {
+                                        style: "margin-top: 10px; padding: 10px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px; display: flex; flex-direction: column; gap: 8px;",
+                                        div { style: "display: flex; gap: 6px; flex-wrap: wrap; font-size: 11px;",
+                                            span { class: "tag", "Hash fixes: {prev.total_hash_fixes}" }
+                                            span { class: "tag", "Slot remaps: {prev.total_slot_fixes}" }
+                                            span { class: "tag", "ORFix: {prev.total_orfix_fixes}" }
+                                            if !prev.skipped_noapplier.is_empty() {
+                                                span { class: "tag tag-outline", style: "color: var(--warn);",
+                                                    "NOAPPLIER: {prev.skipped_noapplier.len()} skipped"
+                                                }
+                                            }
+                                        }
+
+                                        if prev.file_diffs.is_empty() {
+                                            p { style: "font-size: 11px; color: var(--muted); margin: 4px 0;",
+                                                "No file modifications required."
+                                            }
+                                        } else {
+                                            div {
+                                                style: "max-height: 180px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; margin: 4px 0;",
+                                                for diff_item in prev.file_diffs.iter() {
+                                                    div {
+                                                        style: "background: var(--bg); border: 1px solid var(--border); padding: 6px; border-radius: 2px;",
+                                                        div { class: "mono", style: "font-size: 10px; font-weight: 600; color: var(--accent); margin-bottom: 4px;",
+                                                            "{diff_item.relative_path} ({diff_item.changes_count} changes)"
+                                                        }
+                                                        pre {
+                                                            class: "mono",
+                                                            style: "margin: 0; font-size: 10px; line-height: 1.4; max-height: 100px; overflow-x: auto; white-space: pre-wrap; color: var(--text-sec);",
+                                                            "{diff_item.diff}"
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        div { style: "display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px;",
+                                            button {
+                                                class: "btn btn-sm",
+                                                onclick: move |_| fix_preview.set(None),
+                                                "DISMISS"
+                                            }
+                                            if prev.has_changes() {
+                                                button {
+                                                    class: "btn btn-sm btn-accent",
+                                                    disabled: (applying_fix)(),
+                                                    onclick: {
+                                                        let store = store.clone();
+                                                        let gid = game_id.clone();
+                                                        let mid = mod_id.clone();
+                                                        move |_| {
+                                                            let core = store.core.clone();
+                                                            let gid = gid.clone();
+                                                            let mid = mid.clone();
+                                                            let mut s = store.clone();
+                                                            spawn(async move {
+                                                                applying_fix.set(true);
+                                                                match core.apply_mod_fix(gid, mid).await {
+                                                                    Ok(rep) => {
+                                                                        s.toast(ToastKind::Success, format!("Patched {} file(s) successfully (backup saved)", rep.files_modified));
+                                                                        fix_preview.set(None);
+                                                                        backup_refresh.set(backup_refresh() + 1);
+                                                                    }
+                                                                    Err(e) => s.toast(ToastKind::Error, e),
+                                                                }
+                                                                applying_fix.set(false);
+                                                            });
+                                                        }
+                                                    },
+                                                    if (applying_fix)() { "APPLYING…" } else { "APPLY FIX" }
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                             button {

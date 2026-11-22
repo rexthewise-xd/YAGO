@@ -1,10 +1,15 @@
 pub mod assets;
+pub mod effects;
 pub mod github;
 pub mod loader;
 pub mod proton;
 pub mod reshade;
 
 pub use assets::AssetCache;
+pub use effects::{
+    detect_duplicate_effects, install_or_update_effect, read_texfx_config, write_texfx_config,
+    EffectLibraryStatus, SharedEffectLibrary, TexFxConfig,
+};
 
 use anyhow::{anyhow, Result};
 use futures_util::StreamExt;

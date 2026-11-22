@@ -3,9 +3,9 @@ use crate::models::{GameConfig, LibraryDatabase};
 use crate::storage::Librarian;
 use crate::template::GameTemplate;
 use chrono::Utc;
-use vfs::ExeInspector;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use vfs::ExeInspector;
 
 pub struct Discovery;
 
@@ -142,6 +142,7 @@ impl Discovery {
                     .and_then(|t| t.supported_injection_methods.clone())
                     .unwrap_or_default(),
                 remote_info: None,
+                enabled_effects: vec![],
             };
 
             let mut db = LibraryDatabase::default();

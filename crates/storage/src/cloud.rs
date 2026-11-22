@@ -5,11 +5,16 @@ pub struct CloudSync;
 
 impl CloudSync {
     /// Fetches latest game hashes from a remote repository.
-    /// URL would typically point to a GitHub raw JSON file.
+    /// URL can be a full HTTP/HTTPS URL or a GitHub "owner/repo" slug.
     pub async fn fetch_latest_hashes(url: &str) -> Result<Value> {
+        let full_url = if url.starts_with("http://") || url.starts_with("https://") {
+            url.to_string()
+        } else {
+            format!("https://raw.githubusercontent.com/{}/main/hashes.json", url)
+        };
         let client = reqwest::Client::new();
         let response = client
-            .get(url)
+            .get(&full_url)
             .header("User-Agent", "YAGO-Librarian/1.0")
             .send()
             .await?;

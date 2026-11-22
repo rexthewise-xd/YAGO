@@ -2,6 +2,7 @@ pub mod buffer_allocator;
 pub mod compiler;
 pub mod dxbc;
 pub mod error;
+pub mod fixer;
 pub mod ini_merger;
 pub mod key_allocator;
 pub mod merger;
@@ -12,6 +13,10 @@ pub use buffer_allocator::BufferAllocator;
 pub use compiler::CycleCompiler;
 pub use dxbc::DxbcPatcher;
 pub use error::{Result, WeaverError};
+pub use fixer::{
+    apply_mod_fix, has_fix_backup, preview_mod_fix, rollback_mod_fix, FileFixDiff, FixApplyReport,
+    FixPreview, FixRuleSet, SlotRemapRule,
+};
 pub use merger::Merger;
 pub use namespacer::Namespacer;
 pub use validator::Validator;

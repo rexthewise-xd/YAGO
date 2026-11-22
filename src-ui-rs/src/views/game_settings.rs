@@ -1,5 +1,5 @@
 use dioxus::prelude::*;
-use yago_app::{GameConfigUpdate, InjectionMethod, ProfileUpdate};
+use yago_app::{GameConfigUpdate, InjectionMethod, ProfileUpdate, TexFxConfig};
 
 use crate::icons::{IconName, IconSvg};
 use crate::picker::pick_folder;
@@ -197,7 +197,12 @@ fn GameInstallTab(game_id: String) -> Element {
     let mut install_path = use_signal(|| game.install_path.display().to_string());
     let mut exe_name = use_signal(|| game.exe_name.clone());
     let mut launch_args = use_signal(|| game.launch_args.join(" "));
-    let mut prefix_path = use_signal(|| game.prefix_path.as_ref().map(|p| p.display().to_string()).unwrap_or_default());
+    let mut prefix_path = use_signal(|| {
+        game.prefix_path
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default()
+    });
 
     rsx! {
         div { class: "settings-section",
@@ -319,7 +324,9 @@ fn GameAdvancedTab(game_id: String) -> Element {
         let p_id = &game.active_profile_id;
         let db = store.db(&game_id);
         db.as_ref().and_then(|d| {
-            uuid::Uuid::parse_str(p_id).ok().and_then(|u| d.profiles.get(&u).cloned())
+            uuid::Uuid::parse_str(p_id)
+                .ok()
+                .and_then(|u| d.profiles.get(&u).cloned())
         })
     };
 
@@ -536,11 +543,270 @@ fn GameAdvancedTab(game_id: String) -> Element {
             ProfileToggle { label: "MangoHud", desc: "In-game FPS / stats overlay", checked: use_mangohud, field: "use_mangohud", game_id: game_id.clone() }
             ProfileToggle { label: "ReShade", desc: "Post-processing shader framework", checked: use_reshade, field: "use_reshade", game_id: game_id.clone() }
         }
+
+        GameEffectsSection { game_id: game_id.clone() }
     }
 }
 
 #[component]
-fn ProfileToggle(label: String, desc: String, checked: bool, field: String, game_id: String) -> Element {
+fn GameEffectsSection(game_id: String) -> Element {
+    let store = use_context::<Store>();
+    let mut syncing_hashes = use_signal(|| false);
+    let mut installing_effect = use_signal(|| None::<String>);
+    let mut refresh_trigger = use_signal(|| 0usize);
+
+    let gid_res = game_id.clone();
+    let core_res = store.core.clone();
+    let trigger_val = (refresh_trigger)();
+    let effects_resource = use_resource(move || {
+        let core = core_res.clone();
+        let gid = gid_res.clone();
+        let _ = trigger_val;
+        async move { core.list_effect_libraries(gid).await.unwrap_or_default() }
+    });
+
+    let effects = (effects_resource)().unwrap_or_default();
+    let is_syncing = (syncing_hashes)();
+    let installing = (installing_effect)();
+
+    rsx! {
+        div { class: "settings-section",
+            div { class: "settings-section-head",
+                div {
+                    h3 { class: "settings-section-title mono", "SHARED EFFECTS & CHARACTER HASHES" }
+                    div { class: "setting-desc", "Manage shared shader effect libraries and character identification hash database" }
+                }
+                button {
+                    class: "btn btn-sm",
+                    disabled: is_syncing,
+                    onclick: {
+                        let store = store.clone();
+                        let gid = game_id.clone();
+                        move |_| {
+                            let core = store.core.clone();
+                            let gid = gid.clone();
+                            let mut s = store.clone();
+                            spawn(async move {
+                                syncing_hashes.set(true);
+                                match core.sync_hash_db(gid).await {
+                                    Ok(count) => s.toast(ToastKind::Success, format!("Synced {count} character hashes")),
+                                    Err(e) => s.toast(ToastKind::Error, e),
+                                }
+                                syncing_hashes.set(false);
+                            });
+                        }
+                    },
+                    IconSvg { name: IconName::Refresh, size: 14 }
+                    if is_syncing { "SYNCING…" } else { "SYNC HASHES" }
+                }
+            }
+
+            if effects.is_empty() {
+                div { class: "setting-desc", style: "padding: 8px 0; font-style: italic;",
+                    "No shared effect libraries available for this game title."
+                }
+            }
+
+            for eff in effects.iter() {
+                {
+                    let eff_id = eff.id.clone();
+                    let eff_name = eff.name.clone();
+                    let eff_desc = eff.description.clone();
+                    let is_installed = eff.installed_version.is_some();
+                    let version_str = eff.installed_version.clone().unwrap_or_else(|| "Not installed".to_string());
+                    let is_enabled = eff.enabled;
+                    let warnings = eff.duplicate_warnings.clone();
+                    let texfx_cfg = eff.texfx_config;
+
+                    rsx! {
+                        div { key: "{eff_id}", class: "setting-row setting-row-col",
+                            div { class: "setting-row-top",
+                                div { class: "setting-row-left",
+                                    div { class: "setting-icon",
+                                        IconSvg { name: IconName::Folder, size: 18 }
+                                    }
+                                    div {
+                                        div { style: "display: flex; align-items: center; gap: 8px;",
+                                            span { class: "setting-label", "{eff_name}" }
+                                            span {
+                                                class: if is_installed { "tag" } else { "tag tag-outline" },
+                                                style: "font-size: 10px; padding: 1px 6px;",
+                                                "{version_str}"
+                                            }
+                                        }
+                                        div { class: "setting-desc", "{eff_desc}" }
+                                    }
+                                }
+
+                                div { style: "display: flex; align-items: center; gap: 10px;",
+                                    button {
+                                        class: "btn btn-sm",
+                                        disabled: installing.as_deref() == Some(eff_id.as_str()),
+                                        onclick: {
+                                            let store = store.clone();
+                                            let gid = game_id.clone();
+                                            let eid = eff_id.clone();
+                                            let ename = eff_name.clone();
+                                            move |_| {
+                                                let core = store.core.clone();
+                                                let gid = gid.clone();
+                                                let eid = eid.clone();
+                                                let ename = ename.clone();
+                                                let mut s = store.clone();
+                                                spawn(async move {
+                                                    installing_effect.set(Some(eid.clone()));
+                                                    match core.install_effect_library(gid, eid.clone()).await {
+                                                        Ok(_) => {
+                                                            s.toast(ToastKind::Success, format!("{ename} installed successfully"));
+                                                            refresh_trigger.set(refresh_trigger() + 1);
+                                                        }
+                                                        Err(e) => s.toast(ToastKind::Error, e),
+                                                    }
+                                                    installing_effect.set(None);
+                                                });
+                                            }
+                                        },
+                                        if installing.as_deref() == Some(eff_id.as_str()) {
+                                            "INSTALLING…"
+                                        } else if is_installed {
+                                            "UPDATE"
+                                        } else {
+                                            "INSTALL"
+                                        }
+                                    }
+
+                                    if is_installed {
+                                        button {
+                                            class: if is_enabled { "toggle-switch on" } else { "toggle-switch" },
+                                            title: if is_enabled { "Disable effect" } else { "Enable effect" },
+                                            onclick: {
+                                                let store = store.clone();
+                                                let gid = game_id.clone();
+                                                let eid = eff_id.clone();
+                                                move |_| {
+                                                    let core = store.core.clone();
+                                                    let gid = gid.clone();
+                                                    let eid = eid.clone();
+                                                    let mut s = store.clone();
+                                                    spawn(async move {
+                                                        match core.toggle_effect_library(gid, eid, !is_enabled).await {
+                                                            Ok(_) => refresh_trigger.set(refresh_trigger() + 1),
+                                                            Err(e) => s.toast(ToastKind::Error, e),
+                                                        }
+                                                    });
+                                                }
+                                            },
+                                            div { class: "toggle-knob" }
+                                        }
+                                    }
+                                }
+                            }
+
+                            if !warnings.is_empty() {
+                                div { class: "effect-warning-banner",
+                                    div { style: "font-weight: 600; margin-bottom: 2px;",
+                                        "⚠️ Duplicate effect INI detected in user mods (will conflict with managed library):"
+                                    }
+                                    ul { style: "margin: 0; padding-left: 16px; font-family: var(--mono); font-size: 10px;",
+                                        for w in warnings.iter() {
+                                            li { "{w}" }
+                                        }
+                                    }
+                                }
+                            }
+
+                            if let Some(tcfg) = texfx_cfg {
+                                div {
+                                    style: "margin-top: 10px; padding: 10px; background: var(--panel-2); border: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px;",
+                                    div { style: "display: flex; align-items: center; justify-content: space-between;",
+                                        div {
+                                            div { style: "font-size: 11px; font-weight: 600;", "Uncensor Mode" }
+                                            div { style: "font-size: 9px; color: var(--text-sec);", "Camera and render buffer uncensoring" }
+                                        }
+                                        select {
+                                            class: "input select-sm",
+                                            value: "{tcfg.uncensor}",
+                                            onchange: {
+                                                let store = store.clone();
+                                                let gid = game_id.clone();
+                                                let current_tcfg = tcfg;
+                                                move |e: Event<FormData>| {
+                                                    let val = e.value().parse::<u8>().unwrap_or(0);
+                                                    let new_cfg = TexFxConfig {
+                                                        uncensor: val,
+                                                        seizure: current_tcfg.seizure,
+                                                    };
+                                                    let core = store.core.clone();
+                                                    let gid = gid.clone();
+                                                    let mut s = store.clone();
+                                                    spawn(async move {
+                                                        match core.update_texfx_config(gid, new_cfg).await {
+                                                            Ok(_) => {
+                                                                s.toast(ToastKind::Success, "TexFx config updated");
+                                                                refresh_trigger.set(refresh_trigger() + 1);
+                                                            }
+                                                            Err(e) => s.toast(ToastKind::Error, e),
+                                                        }
+                                                    });
+                                                }
+                                            },
+                                            option { value: "0", "Off (0)" }
+                                            option { value: "1", "Always On (1)" }
+                                            option { value: "2", "Camera Proximity (2)" }
+                                        }
+                                    }
+
+                                    div { style: "display: flex; align-items: center; justify-content: space-between;",
+                                        div {
+                                            div { style: "font-size: 11px; font-weight: 600;", "Photosensitivity Protection" }
+                                            div { style: "font-size: 9px; color: var(--text-sec);", "Seizure flash and burst suppression" }
+                                        }
+                                        button {
+                                            class: if tcfg.seizure == 1 { "toggle-switch on" } else { "toggle-switch" },
+                                            onclick: {
+                                                let store = store.clone();
+                                                let gid = game_id.clone();
+                                                let current_tcfg = tcfg;
+                                                move |_| {
+                                                    let new_cfg = TexFxConfig {
+                                                        uncensor: current_tcfg.uncensor,
+                                                        seizure: if current_tcfg.seizure == 1 { 0 } else { 1 },
+                                                    };
+                                                    let core = store.core.clone();
+                                                    let gid = gid.clone();
+                                                    let mut s = store.clone();
+                                                    spawn(async move {
+                                                        match core.update_texfx_config(gid, new_cfg).await {
+                                                            Ok(_) => {
+                                                                s.toast(ToastKind::Success, "TexFx config updated");
+                                                                refresh_trigger.set(refresh_trigger() + 1);
+                                                            }
+                                                            Err(e) => s.toast(ToastKind::Error, e),
+                                                        }
+                                                    });
+                                                }
+                                            },
+                                            div { class: "toggle-knob" }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn ProfileToggle(
+    label: String,
+    desc: String,
+    checked: bool,
+    field: String,
+    game_id: String,
+) -> Element {
     let store = use_context::<Store>();
 
     rsx! {

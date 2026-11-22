@@ -1,8 +1,8 @@
 use crate::download_file;
 use crate::github;
 use anyhow::{anyhow, Result};
-use vfs::archive::extract_targz;
 use std::path::Path;
+use vfs::archive::extract_targz;
 
 pub async fn update_ge_proton<F>(
     owner: &str,

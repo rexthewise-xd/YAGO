@@ -250,6 +250,81 @@ impl AppCore {
         }
         Ok(resolved)
     }
+
+    fn load_fix_rules(&self, librarian_assets: &Path, game_id: &str) -> mod_patches::FixRuleSet {
+        let fixers_dir = librarian_assets.join("fixers");
+
+        // 1. Exact match e.g. "genshin.json"
+        let exact_path = fixers_dir.join(format!("{}.json", game_id));
+        if exact_path.exists() {
+            if let Ok(content) = std::fs::read_to_string(&exact_path) {
+                if let Ok(rules) = serde_json::from_str::<mod_patches::FixRuleSet>(&content) {
+                    return rules;
+                }
+            }
+        }
+
+        // 2. Normalized stem e.g. "GenshinImpact.exe" -> "genshin"
+        let norm = game_id.to_lowercase().replace(".exe", "");
+        for candidate in &["genshin", "zzz", "wuwa", "endfield", "starrail"] {
+            if norm.contains(candidate) {
+                let p = fixers_dir.join(format!("{}.json", candidate));
+                if p.exists() {
+                    if let Ok(content) = std::fs::read_to_string(&p) {
+                        if let Ok(rules) = serde_json::from_str::<mod_patches::FixRuleSet>(&content)
+                        {
+                            return rules;
+                        }
+                    }
+                }
+            }
+        }
+
+        mod_patches::FixRuleSet {
+            game_id: game_id.to_string(),
+            ..Default::default()
+        }
+    }
+
+    pub async fn preview_mod_fix(
+        &self,
+        game_id: String,
+        mod_id: String,
+    ) -> Result<mod_patches::FixPreview, String> {
+        let root = self.mod_root(&mod_id).await?;
+        let librarian = self.librarian.lock().await;
+        let rules = self.load_fix_rules(&librarian.assets_root, &game_id);
+        drop(librarian);
+
+        mod_patches::preview_mod_fix(&root, &rules).map_err(|e| e.to_string())
+    }
+
+    pub async fn apply_mod_fix(
+        &self,
+        game_id: String,
+        mod_id: String,
+    ) -> Result<mod_patches::FixApplyReport, String> {
+        let root = self.mod_root(&mod_id).await?;
+        let librarian = self.librarian.lock().await;
+        let rules = self.load_fix_rules(&librarian.assets_root, &game_id);
+        drop(librarian);
+
+        let report = mod_patches::apply_mod_fix(&root, &rules).map_err(|e| e.to_string())?;
+        self.emit_library().await;
+        Ok(report)
+    }
+
+    pub async fn rollback_mod_fix(&self, mod_id: String) -> Result<usize, String> {
+        let root = self.mod_root(&mod_id).await?;
+        let count = mod_patches::rollback_mod_fix(&root).map_err(|e| e.to_string())?;
+        self.emit_library().await;
+        Ok(count)
+    }
+
+    pub async fn has_mod_fix_backup(&self, mod_id: String) -> Result<bool, String> {
+        let root = self.mod_root(&mod_id).await?;
+        Ok(mod_patches::has_fix_backup(&root))
+    }
 }
 
 fn build_file_tree(dir: &Path, root: &Path, depth: usize) -> Vec<FileNode> {
@@ -366,5 +441,79 @@ mod tests {
                 "Mod should stay in db if trash fails"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn test_mod_fix_lifecycle() {
+        let dir = tempdir().unwrap();
+        let core = init_with_dir(dir.path().to_path_buf()).await.unwrap();
+
+        let game_id = "genshin".to_string();
+        let mod_uuid = Uuid::new_v4();
+        let mod_dir = dir.path().join("fix_test_mod");
+        std::fs::create_dir_all(&mod_dir).unwrap();
+        let original_ini = "[TextureOverrideBody]\nhash = deadbeef\nps-t0 = ResourceDiffuse\nps-t1 = ResourceNormalMap\n";
+        std::fs::write(mod_dir.join("mod.ini"), original_ini).unwrap();
+
+        let record = ModRecord {
+            id: mod_uuid,
+            owner_game_id: game_id.clone(),
+            path: mod_dir.clone(),
+            size: "0".to_string(),
+            meta: storage::models::ModMetadata {
+                name: "Fix Test".to_string(),
+                version: "1.0".to_string(),
+                author: "Author".to_string(),
+                url: None,
+                preview_image: None,
+                description: None,
+            },
+            compatibility: storage::models::ModCompatibility {
+                game: "genshin".to_string(),
+                character: "Keqing".to_string(),
+                hashes: vec![],
+                fingerprint: "".to_string(),
+            },
+            config: storage::models::ModConfig {
+                mod_type: Some("character".to_string()),
+                tags: vec![],
+                keybinds: std::collections::HashMap::new(),
+            },
+            enabled: true,
+            added_at: chrono::Utc::now(),
+        };
+
+        {
+            let mut dbs = core.game_dbs.lock().await;
+            let mut db = storage::LibraryDatabase::default();
+            db.mods.insert(mod_uuid, record);
+            dbs.insert(game_id.clone(), db);
+        }
+
+        // Initially no backup
+        assert!(!core.has_mod_fix_backup(mod_uuid.to_string()).await.unwrap());
+
+        // Preview fix
+        let preview = core
+            .preview_mod_fix(game_id.clone(), mod_uuid.to_string())
+            .await
+            .unwrap();
+        assert!(preview.total_orfix_fixes > 0);
+
+        // Apply fix
+        let report = core
+            .apply_mod_fix(game_id.clone(), mod_uuid.to_string())
+            .await
+            .unwrap();
+        assert_eq!(report.files_modified, 1);
+        assert!(core.has_mod_fix_backup(mod_uuid.to_string()).await.unwrap());
+
+        // Rollback fix
+        let restored = core.rollback_mod_fix(mod_uuid.to_string()).await.unwrap();
+        assert_eq!(restored, 1);
+        assert!(!core.has_mod_fix_backup(mod_uuid.to_string()).await.unwrap());
+
+        let restored_content = std::fs::read_to_string(mod_dir.join("mod.ini")).unwrap();
+        assert_eq!(restored_content, original_ini);
     }
 }

@@ -82,12 +82,7 @@ impl AppCore {
                 if let Some(config) = db.games.get_mut(&game_id) {
                     config.install_status = InstallStatus::Downloading;
                     config.installed_components = selected_category_ids.clone();
-                    let _ = self
-                        .librarian
-                        .lock()
-                        .await
-                        .save_game_db(&game_id, db)
-                        .await;
+                    let _ = self.librarian.lock().await.save_game_db(&game_id, db).await;
                 }
             }
         }

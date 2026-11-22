@@ -19,7 +19,10 @@ pub fn default_app_data_dir() -> PathBuf {
         .join("yago")
 }
 
-pub fn librarian_config(settings: &GlobalSettings, app_data_dir: &Path) -> storage::storage::LibrarianConfig {
+pub fn librarian_config(
+    settings: &GlobalSettings,
+    app_data_dir: &Path,
+) -> storage::storage::LibrarianConfig {
     let opt = |p: &Path| {
         if p.as_os_str().is_empty() {
             None
@@ -98,6 +101,17 @@ pub async fn init_with_dir(app_data_dir: PathBuf) -> anyhow::Result<AppCore> {
         }
     }
 
+    let fixers_root = librarian.assets_root.join("fixers");
+    if !fixers_root.exists() {
+        let _ = std::fs::create_dir_all(&fixers_root);
+    }
+    if let Some(dir) = ASSETS_DIR.get_dir("fixers") {
+        for file in dir.files() {
+            let dest = fixers_root.join(file.path().file_name().unwrap());
+            let _ = std::fs::write(&dest, file.contents());
+        }
+    }
+
     extract_templates(&librarian);
 
     let libs_dir = app_data_dir.join("libs");
@@ -108,7 +122,9 @@ pub async fn init_with_dir(app_data_dir: PathBuf) -> anyhow::Result<AppCore> {
     #[cfg(target_os = "linux")]
     {
         let dest = libs_dir.join("libshield.so");
-        let needs_write = std::fs::read(&dest).map(|b| b != SHIELD_BYTES).unwrap_or(true);
+        let needs_write = std::fs::read(&dest)
+            .map(|b| b != SHIELD_BYTES)
+            .unwrap_or(true);
         if needs_write {
             if let Err(e) = std::fs::write(&dest, SHIELD_BYTES) {
                 eprintln!("Failed to extract libshield.so: {}", e);

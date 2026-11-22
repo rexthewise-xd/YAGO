@@ -53,7 +53,7 @@ pub struct RemoteInfo {
     pub game_biz: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct GameConfig {
     pub id: String, // The exe_name or normalized template ID
     pub name: String,
@@ -110,6 +110,8 @@ pub struct GameConfig {
     pub supported_injection_methods: Vec<InjectionMethod>,
     #[serde(default)]
     pub remote_info: Option<RemoteInfo>,
+    #[serde(default)]
+    pub enabled_effects: Vec<String>,
 }
 
 fn default_true() -> bool {

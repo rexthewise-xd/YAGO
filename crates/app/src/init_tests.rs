@@ -76,6 +76,11 @@ mod tests {
         let librarian = core.librarian.lock().await;
         assert!(librarian.assets_root.join("hashes.json").exists());
         assert!(librarian.templates_root.join("genshin.json").exists());
+        assert!(librarian
+            .assets_root
+            .join("fixers")
+            .join("genshin.json")
+            .exists());
 
         let config_content = fs::read_to_string(dir.path().join("app_config.json")).unwrap();
         assert!(config_content.contains("proton_repo"));

@@ -34,8 +34,8 @@ pub struct GameTemplate {
     #[serde(default)]
     pub loader_repo: Option<String>, // e.g., "SpectrumQT/WWMI-Package"
 
-    #[serde(default)]
-    pub hash_db_url: Option<String>, // New: Raw GitHub URL for character hash map
+    #[serde(default, alias = "hash_repo")]
+    pub hash_db_url: Option<String>, // Raw GitHub URL or repo for character hash map
 
     // Logic/Patching Config
     #[serde(default)]
@@ -101,5 +101,24 @@ pub fn load_templates(dir: &Path) -> Result<Vec<GameTemplate>> {
             templates.push(template);
         }
     }
+
     Ok(templates)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_game_template_hash_repo_alias() {
+        let json = r#"{
+            "name": "Genshin Impact",
+            "hash_repo": "leotorrez/GI-Model-Importer-Assets"
+        }"#;
+        let template: GameTemplate = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            template.hash_db_url.as_deref(),
+            Some("leotorrez/GI-Model-Importer-Assets")
+        );
+    }
 }

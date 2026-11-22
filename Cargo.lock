@@ -3651,6 +3651,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "byteorder",
+ "chrono",
  "criterion",
  "ini",
  "insta",
@@ -5202,6 +5203,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "futures-util",
+ "ini",
  "md5",
  "reqwest 0.11.27",
  "serde",

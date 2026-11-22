@@ -19,6 +19,8 @@ pub use commands::library::{
     SetupStatus,
 };
 pub use launcher::InjectionMethod;
+pub use mod_patches::{FileFixDiff, FixApplyReport, FixPreview, FixRuleSet};
+pub use resources::effects::{EffectLibraryStatus, SharedEffectLibrary, TexFxConfig};
 pub use storage::{DiscoveredGame, RemoteCatalogEntry};
 
 use include_dir::{include_dir, Dir};
