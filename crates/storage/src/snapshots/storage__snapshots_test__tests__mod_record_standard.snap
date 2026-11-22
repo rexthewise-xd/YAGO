@@ -33,5 +33,6 @@ config:
   suppress_creditinfo: false
   shuffle_locked: false
   context_pool: ~
+  shader_files: []
 enabled: true
 added_at: "[timestamp]"

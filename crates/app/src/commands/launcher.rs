@@ -240,6 +240,20 @@ impl AppCore {
             }
         }
 
+        // Bridge gui_collect auto_generated.ini if configured and exists
+        if let Some(gui_path) = &config.gui_collect_ini {
+            if gui_path.exists() {
+                let bridge_content = format!(
+                    "; YAGO gui_collect Bridge\ninclude = {}\n",
+                    gui_path.display()
+                );
+                plan.generated_files.push((
+                    PathBuf::from("00_Configs/yago_gui_collect_bridge.ini"),
+                    bridge_content,
+                ));
+            }
+        }
+
         let profile_dir = paths.profile_mods.parent().ok_or("Invalid profile path")?;
         if !profile_dir.exists() {
             std::fs::create_dir_all(profile_dir).map_err(|e| e.to_string())?;
@@ -261,6 +275,46 @@ impl AppCore {
             #[cfg(windows)]
             let _ = std::fs::remove_dir_all(&game_mods_dir);
         }
+
+        // Link ShaderFixes for enabled mods and cleanup stale symlinks for disabled mods
+        let active_shader_fixes_dir = game_root.join("ShaderFixes");
+        let has_any_shaders = db.mods.values().any(|m| !m.config.shader_files.is_empty());
+        if active_shader_fixes_dir.exists() || has_any_shaders {
+            let _ = std::fs::create_dir_all(&active_shader_fixes_dir);
+            let mut active_shader_names = std::collections::HashSet::new();
+
+            for mid in &profile.enabled_mod_ids {
+                if let Some(record) = db.mods.get(mid) {
+                    for rel_shader in &record.config.shader_files {
+                        let src_path = record.path.join(rel_shader);
+                        if src_path.exists() {
+                            if let Some(file_name) = Path::new(rel_shader).file_name() {
+                                let dest_path = active_shader_fixes_dir.join(file_name);
+                                active_shader_names.insert(file_name.to_string_lossy().to_string());
+                                let _ = vfs::make_symlink(&src_path, &dest_path);
+                            }
+                        }
+                    }
+                }
+            }
+
+            for (mid, record) in &db.mods {
+                if !profile.enabled_mod_ids.contains(mid) {
+                    for rel_shader in &record.config.shader_files {
+                        if let Some(file_name) = Path::new(rel_shader).file_name() {
+                            let name_str = file_name.to_string_lossy().to_string();
+                            if !active_shader_names.contains(&name_str) {
+                                let stale_path = active_shader_fixes_dir.join(file_name);
+                                if stale_path.exists() {
+                                    let _ = std::fs::remove_file(stale_path);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         let target_ini = if !is_proxy {
             loaders_root.join("d3dx.ini")
         } else {
@@ -281,6 +335,15 @@ impl AppCore {
                     }
                 }
             }
+
+            // Patch hunting mode
+            let hunting_val = if config.hunting_mode { "2" } else { "0" };
+            let _ = <IniDocument as IniPatcher>::patch_file(
+                &target_ini,
+                "Hunting",
+                "hunting",
+                hunting_val,
+            );
         }
         self.emit(AppEvent::TaskCompleted("Deployment successful".to_string()));
         Ok(report)
@@ -397,6 +460,12 @@ impl AppCore {
                 }
                 if let Some(urw) = update.use_rabbit_wrapper {
                     config.use_rabbit_wrapper = urw;
+                }
+                if let Some(hm) = update.hunting_mode {
+                    config.hunting_mode = hm;
+                }
+                if let Some(gci) = update.gui_collect_ini {
+                    config.gui_collect_ini = gci;
                 }
                 self.librarian
                     .lock()
@@ -713,5 +782,26 @@ impl AppCore {
         };
 
         launcher::apply_wuwa_engine_tweaks(&install_path).map_err(|e| e.to_string())
+    }
+
+    pub async fn read_d3d11_diagnostics(
+        &self,
+        game_id: String,
+    ) -> Result<Vec<mod_patches::LogDiagnostic>, String> {
+        let install_path = {
+            let dbs = self.game_dbs.lock().await;
+            let db = dbs.get(&game_id).ok_or("Game not found")?;
+            let config = db.games.get(&game_id).ok_or("Config missing")?;
+            if config.install_path.exists() {
+                config.install_path.clone()
+            } else if let Some(parent) = config.exe_path.parent() {
+                parent.to_path_buf()
+            } else {
+                config.install_path.clone()
+            }
+        };
+
+        let log_path = install_path.join("d3d11_log.txt");
+        mod_patches::parse_d3d11_log(&log_path, 500).map_err(|e| e.to_string())
     }
 }

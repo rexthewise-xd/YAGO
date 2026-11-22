@@ -94,6 +94,8 @@ pub struct GameConfigUpdate {
     pub pre_launch_cmd: Option<Option<String>>,
     pub post_exit_cmd: Option<Option<String>>,
     pub use_rabbit_wrapper: Option<bool>,
+    pub hunting_mode: Option<bool>,
+    pub gui_collect_ini: Option<Option<PathBuf>>,
 }
 
 #[derive(serde::Deserialize, Default)]
@@ -251,6 +253,8 @@ impl AppCore {
             use_rabbit_wrapper: template.use_rabbit_wrapper.unwrap_or(false),
             total_playtime_secs: 0,
             last_played: None,
+            hunting_mode: false,
+            gui_collect_ini: None,
         };
 
         let mut db = LibraryDatabase::default();

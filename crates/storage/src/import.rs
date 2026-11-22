@@ -416,6 +416,7 @@ impl Importer {
         }
 
         Self::scan_for_nsfw(&mut metadata_final, &mut config, &file_name);
+        config.shader_files = Self::detect_shader_files(&target_path);
 
         let record = ModRecord {
             id: mod_id,
@@ -789,6 +790,30 @@ impl Importer {
         if is_nsfw && !config.tags.iter().any(|t| t.to_lowercase() == "nsfw") {
             config.tags.push("NSFW".to_string());
         }
+    }
+
+    pub fn detect_shader_files(mod_path: &Path) -> Vec<String> {
+        let mut shaders = Vec::new();
+        for entry in walkdir::WalkDir::new(mod_path)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            if entry.file_type().is_file() {
+                let name_lower = entry.file_name().to_string_lossy().to_lowercase();
+                let is_shader = name_lower.ends_with(".hlsl")
+                    || (name_lower.ends_with(".txt")
+                        && (name_lower.contains("-vs=")
+                            || name_lower.contains("-ps=")
+                            || name_lower.contains("-cs=")));
+                if is_shader {
+                    if let Ok(rel) = entry.path().strip_prefix(mod_path) {
+                        shaders.push(rel.to_string_lossy().replace('\\', "/"));
+                    }
+                }
+            }
+        }
+        shaders.sort();
+        shaders
     }
 
     pub fn generate_default_metadata(filename: &str) -> ModMetadata {

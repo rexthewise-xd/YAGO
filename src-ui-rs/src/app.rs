@@ -3,7 +3,7 @@ use dioxus::prelude::*;
 use tokio::sync::broadcast::error::RecvError;
 use yago_app::AppCore;
 
-use crate::components::{ActivityPanel, Rail, StatusBar, Toasts, TopStrip};
+use crate::components::{ActivityPanel, CommandPalette, Rail, StatusBar, Toasts, TopStrip};
 use crate::icons::{IconName, IconSvg};
 use crate::state::{Overlay, Store, View};
 use crate::views::{
@@ -63,6 +63,15 @@ pub fn App() -> Element {
             spawn(async move {
                 let _ = core.trigger_panic().await;
             });
+        });
+    }
+
+    let mut show_command_palette = use_signal(|| false);
+
+    {
+        let _ = use_global_shortcut("Ctrl+K", move |_| {
+            let curr = (show_command_palette)();
+            show_command_palette.set(!curr);
         });
     }
 
@@ -150,6 +159,13 @@ pub fn App() -> Element {
                         let _ = core.trigger_panic().await;
                     });
                 }
+                let key_dbg = format!("{:?}", evt.key());
+                if (evt.modifiers().ctrl() || evt.modifiers().meta())
+                    && (key_dbg.contains('k') || key_dbg.contains('K'))
+                {
+                    let curr = (show_command_palette)();
+                    show_command_palette.set(!curr);
+                }
             },
 
             TopStrip {}
@@ -211,6 +227,8 @@ pub fn App() -> Element {
                     }
                 }
             }
+
+            CommandPalette { is_open: show_command_palette }
         }
     }
 }

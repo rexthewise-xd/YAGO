@@ -1,11 +1,11 @@
 use dioxus::prelude::*;
 use uuid::Uuid;
-use yago_app::{FileNode, FixPreview, IniAnchor};
+use yago_app::{FileNode, FixPreview, IniAnchor, MeshPreviewData};
 
 use crate::components::Confirm;
 use crate::icons::{IconName, IconSvg};
 use crate::modutil::{is_nsfw, mod_preview_url, tag_class, MoveDir};
-use crate::picker::pick_save_file;
+use crate::picker::{pick_folder, pick_save_file};
 use crate::state::{Store, ToastKind};
 
 #[derive(Clone, Copy, PartialEq)]
@@ -13,6 +13,7 @@ enum Tab {
     Info,
     Files,
     Editor,
+    Mesh,
 }
 
 fn is_text_file(name: &str) -> bool {
@@ -53,6 +54,7 @@ pub fn ModInspector(
     let mut previewing_fix = use_signal(|| false);
     let mut applying_fix = use_signal(|| false);
     let mut exporting_clean = use_signal(|| false);
+    let mut syncing_dvt = use_signal(|| false);
     let mut fix_preview = use_signal(|| None::<FixPreview>);
     let mut backup_refresh = use_signal(|| 0usize);
     let mut capturing_keybind = use_signal(|| None::<String>);
@@ -173,6 +175,12 @@ pub fn ModInspector(
                         IconSvg { name: IconName::Folder, size: 13 }
                         "FILES"
                     }
+                    button {
+                        class: if current_tab == Tab::Mesh { "itab active" } else { "itab" },
+                        onclick: move |_| tab.set(Tab::Mesh),
+                        IconSvg { name: IconName::Deploy, size: 13 }
+                        "3D MESH"
+                    }
                     if dev_mode {
                         button {
                             class: if current_tab == Tab::Editor { "itab active" } else { "itab" },
@@ -210,6 +218,11 @@ pub fn ModInspector(
                                     span { class: "info-avatar", "{record.meta.author.chars().next().unwrap_or('?').to_uppercase()}" }
                                     span { "{record.meta.author}" }
                                     span { class: "info-version", "v{record.meta.version}" }
+                                    if !record.config.shader_files.is_empty() {
+                                        span { class: "tag", style: "background: rgba(14, 165, 233, 0.15); color: #38bdf8; border: 1px solid rgba(14, 165, 233, 0.4);",
+                                            "SHADERS: {record.config.shader_files.len()}"
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -944,6 +957,42 @@ pub fn ModInspector(
                             }
                             button {
                                 class: "btn btn-block",
+                                disabled: (syncing_dvt)(),
+                                title: "Transfer updated draw counts and .buf/.ib files from Blender export without clobbering toggle logic",
+                                onclick: {
+                                    let store = store.clone();
+                                    let mid = mod_id.clone();
+                                    move |_| {
+                                        let core = store.core.clone();
+                                        let mid = mid.clone();
+                                        let mut s = store.clone();
+                                        spawn(async move {
+                                            if let Some(export_dir) = pick_folder("Select Blender Export Folder").await {
+                                                syncing_dvt.set(true);
+                                                let exp_str = export_dir.display().to_string();
+                                                match core.sync_mod_draw_values(mid, exp_str).await {
+                                                    Ok(rep) => {
+                                                        s.toast(
+                                                            ToastKind::Success,
+                                                            format!(
+                                                                "DVT Sync complete: {} draw(s) updated, {} buffer(s) copied (Backup created)",
+                                                                rep.updated_draws, rep.copied_buffers
+                                                            ),
+                                                        );
+                                                        backup_refresh.set(backup_refresh() + 1);
+                                                    }
+                                                    Err(e) => s.toast(ToastKind::Error, e),
+                                                }
+                                                syncing_dvt.set(false);
+                                            }
+                                        });
+                                    }
+                                },
+                                IconSvg { name: IconName::Deploy, size: 15 }
+                                if (syncing_dvt)() { "SYNCING DVT…" } else { "SYNC BLENDER EXPORT (DVT)" }
+                            }
+                            button {
+                                class: "btn btn-block",
                                 onclick: move |_| {
                                     let core = validate_store.core.clone();
                                     let mid = validate_id.clone();
@@ -1064,6 +1113,10 @@ pub fn ModInspector(
                         }
                     }
                 }
+
+                if current_tab == Tab::Mesh {
+                    MeshPreviewView { mod_id: mod_id.clone() }
+                }
             }
 
             if (confirm_delete)() {
@@ -1147,4 +1200,350 @@ fn FileTreeNode(
             }
         }
     }
+}
+
+#[component]
+fn MeshPreviewView(mod_id: String) -> Element {
+    let store = use_context::<Store>();
+    let mut mesh_data = use_signal(|| None::<MeshPreviewData>);
+    let mut loading = use_signal(|| false);
+    let mut is_wireframe = use_signal(|| false);
+    let mut error_msg = use_signal(|| None::<String>);
+
+    let data = (mesh_data)();
+    let is_loading = (loading)();
+    let wire = (is_wireframe)();
+    let err = (error_msg)();
+
+    use_effect(move || {
+        if let Some(d) = (mesh_data)() {
+            let eval_script = generate_webgl_init_script(&d.positions, &d.indices);
+            let _ = document::eval(&eval_script);
+        }
+    });
+
+    rsx! {
+        div { class: "inspector-files", style: "padding: 12px; display: flex; flex-direction: column; gap: 10px;",
+            if data.is_none() {
+                div {
+                    style: "padding: 32px 16px; background: var(--panel-2); border: 1px dashed var(--border); border-radius: 6px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 12px;",
+                    IconSvg { name: IconName::Deploy, size: 40 }
+                    div {
+                        h4 { style: "font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 4px;", "3D MESH GEOMETRY PREVIEW" }
+                        p { style: "font-size: 11px; color: var(--muted); max-width: 380px; margin: 0 auto;",
+                            "Extract and render 3DMigoto vertex (.buf) and index (.ib) geometry in real-time WebGL directly inside YAGO."
+                        }
+                    }
+
+                    if let Some(e) = err {
+                        div { class: "mono", style: "font-size: 11px; color: var(--danger); padding: 6px 12px; background: rgba(239, 68, 68, 0.1); border-radius: 4px;",
+                            "{e}"
+                        }
+                    }
+
+                    button {
+                        class: "btn btn-accent",
+                        disabled: is_loading,
+                        onclick: {
+                            let store = store.clone();
+                            let mid = mod_id.clone();
+                            move |_| {
+                                let core = store.core.clone();
+                                let mid = mid.clone();
+                                let mut s = store.clone();
+                                spawn(async move {
+                                    loading.set(true);
+                                    error_msg.set(None);
+                                    match core.get_mod_mesh_preview(mid).await {
+                                        Ok(parsed) => {
+                                            s.toast(ToastKind::Success, format!("Parsed {} triangles", parsed.triangle_count));
+                                            mesh_data.set(Some(parsed));
+                                        }
+                                        Err(e) => {
+                                            s.toast(ToastKind::Error, e.clone());
+                                            error_msg.set(Some(e));
+                                        }
+                                    }
+                                    loading.set(false);
+                                });
+                            }
+                        },
+                        IconSvg { name: IconName::Deploy, size: 14 }
+                        if is_loading { "PARSING GEOMETRY…" } else { "LOAD 3D PREVIEW" }
+                    }
+                }
+            } else if let Some(d) = data {
+                div { style: "display: flex; flex-direction: column; gap: 8px;",
+                    div { style: "display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;",
+                        div { style: "display: flex; align-items: center; gap: 8px;",
+                            span { class: "tag mono", "{d.vertex_count} VERTICES" }
+                            span { class: "tag mono", "{d.triangle_count} TRIS" }
+                            for src in d.source_files.iter() {
+                                span { class: "tag tag-outline mono", style: "font-size: 10px;", "{src}" }
+                            }
+                        }
+                        div { style: "display: flex; align-items: center; gap: 6px;",
+                            button {
+                                class: "btn btn-sm",
+                                onclick: move |_| {
+                                    let next_wire = !wire;
+                                    is_wireframe.set(next_wire);
+                                    let _ = document::eval(&format!("if (window.__yago_set_wireframe) window.__yago_set_wireframe({});", next_wire));
+                                },
+                                if wire { "SHADED" } else { "WIREFRAME" }
+                            }
+                            button {
+                                class: "btn btn-sm",
+                                onclick: move |_| {
+                                    let _ = document::eval("if (window.__yago_reset_cam) window.__yago_reset_cam();");
+                                },
+                                "RESET CAM"
+                            }
+                            button {
+                                class: "btn btn-sm",
+                                title: "Reload mesh geometry",
+                                onclick: {
+                                    let store = store.clone();
+                                    let mid = mod_id.clone();
+                                    move |_| {
+                                        let core = store.core.clone();
+                                        let mid = mid.clone();
+                                        spawn(async move {
+                                            if let Ok(parsed) = core.get_mod_mesh_preview(mid).await {
+                                                mesh_data.set(Some(parsed));
+                                            }
+                                        });
+                                    }
+                                },
+                                IconSvg { name: IconName::Refresh, size: 12 }
+                            }
+                        }
+                    }
+
+                    canvas {
+                        id: "yago-mesh-canvas",
+                        style: "width: 100%; height: 380px; background: #070a13; border: 1px solid var(--border); border-radius: 4px; display: block; touch-action: none; cursor: grab;",
+                    }
+
+                    div { class: "mono", style: "font-size: 10px; color: var(--muted); text-align: center;",
+                        "Left Click + Drag to Orbit • Scroll Wheel to Zoom"
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn generate_webgl_init_script(positions: &[f32], indices: &[u32]) -> String {
+    format!(
+        r#"(function() {{
+            const canvas = document.getElementById('yago-mesh-canvas');
+            if (!canvas) return;
+            const gl = canvas.getContext('webgl2') || canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+            if (!gl) {{ console.error('WebGL not supported'); return; }}
+            gl.getExtension('OES_element_index_uint');
+
+            const positions = new Float32Array({positions:?});
+            const indices = new Uint32Array({indices:?});
+
+            const lineIndices = new Uint32Array(indices.length * 2);
+            let lIdx = 0;
+            for (let i = 0; i < indices.length; i += 3) {{
+                lineIndices[lIdx++] = indices[i];
+                lineIndices[lIdx++] = indices[i+1];
+                lineIndices[lIdx++] = indices[i+1];
+                lineIndices[lIdx++] = indices[i+2];
+                lineIndices[lIdx++] = indices[i+2];
+                lineIndices[lIdx++] = indices[i];
+            }}
+
+            const vsSource = `
+                attribute vec3 aPos;
+                uniform mat4 uMatrix;
+                varying vec3 vNormal;
+                void main() {{
+                    vNormal = normalize(aPos);
+                    gl_Position = uMatrix * vec4(aPos, 1.0);
+                }}
+            `;
+
+            const fsSource = `
+                precision mediump float;
+                varying vec3 vNormal;
+                uniform bool uWireframe;
+                void main() {{
+                    if (uWireframe) {{
+                        gl_FragColor = vec4(0.2, 0.85, 1.0, 1.0);
+                    }} else {{
+                        vec3 light = normalize(vec3(0.5, 0.8, 1.0));
+                        float diff = max(dot(vNormal, light), 0.1);
+                        vec3 col = vec3(0.65, 0.75, 0.88) * (diff * 0.8 + 0.25);
+                        gl_FragColor = vec4(col, 1.0);
+                    }}
+                }}
+            `;
+
+            function createShader(gl, type, source) {{
+                const s = gl.createShader(type);
+                gl.shaderSource(s, source);
+                gl.compileShader(s);
+                return s;
+            }}
+
+            const vs = createShader(gl, gl.VERTEX_SHADER, vsSource);
+            const fs = createShader(gl, gl.FRAGMENT_SHADER, fsSource);
+            const prog = gl.createProgram();
+            gl.attachShader(prog, vs);
+            gl.attachShader(prog, fs);
+            gl.linkProgram(prog);
+            gl.useProgram(prog);
+
+            const aPos = gl.getAttribLocation(prog, 'aPos');
+            const uMatrix = gl.getUniformLocation(prog, 'uMatrix');
+            const uWireframe = gl.getUniformLocation(prog, 'uWireframe');
+
+            const posBuf = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+            gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+            gl.enableVertexAttribArray(aPos);
+            gl.vertexAttribPointer(aPos, 3, gl.FLOAT, false, 0, 0);
+
+            const idxBuf = gl.createBuffer();
+            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, idxBuf);
+            gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
+
+            const lineBuf = gl.createBuffer();
+            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, lineBuf);
+            gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, lineIndices, gl.STATIC_DRAW);
+
+            let rotX = 0.2;
+            let rotY = 0.5;
+            let dist = 2.4;
+            let isWire = false;
+            let dragging = false;
+            let lastX = 0, lastY = 0;
+
+            function multiply(a, b) {{
+                let out = new Float32Array(16);
+                for (let i = 0; i < 4; i++) {{
+                    for (let j = 0; j < 4; j++) {{
+                        out[j * 4 + i] =
+                            a[0 * 4 + i] * b[j * 4 + 0] +
+                            a[1 * 4 + i] * b[j * 4 + 1] +
+                            a[2 * 4 + i] * b[j * 4 + 2] +
+                            a[3 * 4 + i] * b[j * 4 + 3];
+                    }}
+                }}
+                return out;
+            }}
+
+            function render() {{
+                const dpr = window.devicePixelRatio || 1;
+                const w = canvas.clientWidth * dpr;
+                const h = canvas.clientHeight * dpr;
+                if (canvas.width !== w || canvas.height !== h) {{
+                    canvas.width = w;
+                    canvas.height = h;
+                }}
+                gl.viewport(0, 0, canvas.width, canvas.height);
+                gl.clearColor(0.04, 0.06, 0.11, 1.0);
+                gl.enable(gl.DEPTH_TEST);
+                gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+                const aspect = canvas.width / (canvas.height || 1);
+                const fovy = 45 * Math.PI / 180;
+                const near = 0.1, far = 100.0;
+                const f = 1.0 / Math.tan(fovy / 2);
+                const nf = 1 / (near - far);
+                const proj = new Float32Array([
+                    f / aspect, 0, 0, 0,
+                    0, f, 0, 0,
+                    0, 0, (far + near) * nf, -1,
+                    0, 0, (2 * far * near) * nf, 0
+                ]);
+
+                const view = new Float32Array([
+                    1, 0, 0, 0,
+                    0, 1, 0, 0,
+                    0, 0, 1, 0,
+                    0, 0, -dist, 1
+                ]);
+
+                const cosX = Math.cos(rotX), sinX = Math.sin(rotX);
+                const rx = new Float32Array([
+                    1, 0, 0, 0,
+                    0, cosX, sinX, 0,
+                    0, -sinX, cosX, 0,
+                    0, 0, 0, 1
+                ]);
+
+                const cosY = Math.cos(rotY), sinY = Math.sin(rotY);
+                const ry = new Float32Array([
+                    cosY, 0, -sinY, 0,
+                    0, 1, 0, 0,
+                    sinY, 0, cosY, 0,
+                    0, 0, 0, 1
+                ]);
+
+                const model = multiply(ry, rx);
+                const mv = multiply(view, model);
+                const mvp = multiply(proj, mv);
+
+                gl.useProgram(prog);
+                gl.uniformMatrix4fv(uMatrix, false, mvp);
+                gl.uniform1i(uWireframe, isWire ? 1 : 0);
+
+                if (isWire) {{
+                    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, lineBuf);
+                    gl.drawElements(gl.LINES, lineIndices.length, gl.UNSIGNED_INT, 0);
+                }} else {{
+                    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, idxBuf);
+                    gl.drawElements(gl.TRIANGLES, indices.length, gl.UNSIGNED_INT, 0);
+                }}
+            }}
+
+            canvas.onpointerdown = (e) => {{
+                dragging = true;
+                lastX = e.clientX;
+                lastY = e.clientY;
+                canvas.style.cursor = 'grabbing';
+            }};
+
+            window.onpointerup = () => {{
+                dragging = false;
+                if (canvas) canvas.style.cursor = 'grab';
+            }};
+
+            window.onpointermove = (e) => {{
+                if (!dragging) return;
+                const dx = e.clientX - lastX;
+                const dy = e.clientY - lastY;
+                lastX = e.clientX;
+                lastY = e.clientY;
+                rotY += dx * 0.01;
+                rotX = Math.max(-1.5, Math.min(1.5, rotX + dy * 0.01));
+                render();
+            }};
+
+            canvas.onwheel = (e) => {{
+                dist = Math.max(0.6, Math.min(8.0, dist + e.deltaY * 0.003));
+                render();
+                e.preventDefault();
+            }};
+
+            window.__yago_set_wireframe = (val) => {{
+                isWire = val;
+                render();
+            }};
+
+            window.__yago_reset_cam = () => {{
+                rotX = 0.2;
+                rotY = 0.5;
+                dist = 2.4;
+                render();
+            }};
+
+            render();
+        }})();"#
+    )
 }

@@ -23,7 +23,8 @@ pub use commands::library::{
 pub use commands::profiles::BundleImportReport;
 pub use launcher::{GraphicsAuditWarning, InjectionMethod};
 pub use mod_patches::{
-    FileFixDiff, FixApplyReport, FixPreview, FixRuleSet, IniAnchor, VariantPreset,
+    DvtSyncReport, FileFixDiff, FixApplyReport, FixPreview, FixRuleSet, IniAnchor, LogDiagnostic,
+    MeshPreviewData, VariantPreset,
 };
 pub use resources::effects::{EffectLibraryStatus, SharedEffectLibrary, TexFxConfig};
 pub use resources::gamebanana::{GbModDetail, GbModFile, GbModSummary, YagoDeepLink};

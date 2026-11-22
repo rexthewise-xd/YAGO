@@ -140,6 +140,10 @@ pub struct GameConfig {
     pub total_playtime_secs: u64,
     #[serde(default)]
     pub last_played: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub hunting_mode: bool,
+    #[serde(default)]
+    pub gui_collect_ini: Option<PathBuf>,
 }
 
 fn default_true() -> bool {
@@ -192,6 +196,8 @@ pub struct ModConfig {
     pub shuffle_locked: bool,
     #[serde(default)]
     pub context_pool: Option<String>,
+    #[serde(default)]
+    pub shader_files: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

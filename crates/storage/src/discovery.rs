@@ -158,6 +158,8 @@ impl Discovery {
                 use_rabbit_wrapper: template.and_then(|t| t.use_rabbit_wrapper).unwrap_or(false),
                 total_playtime_secs: 0,
                 last_played: None,
+                hunting_mode: false,
+                gui_collect_ini: None,
             };
 
             let mut db = LibraryDatabase::default();

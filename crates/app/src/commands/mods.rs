@@ -755,6 +755,43 @@ impl AppCore {
 
         storage::export_clean_mod_zip(&mod_root, Path::new(&dest_zip)).map_err(|e| e.to_string())
     }
+
+    pub async fn sync_mod_draw_values(
+        &self,
+        mod_id: String,
+        export_dir: String,
+    ) -> Result<mod_patches::DvtSyncReport, String> {
+        let mod_uuid = Uuid::parse_str(&mod_id).map_err(|e| e.to_string())?;
+        let dbs = self.game_dbs.lock().await;
+
+        let record = dbs
+            .values()
+            .find_map(|db| db.mods.get(&mod_uuid))
+            .ok_or("Mod not found")?;
+
+        let mod_root = record.path.clone();
+        drop(dbs);
+
+        mod_patches::sync_draw_values(&mod_root, Path::new(&export_dir)).map_err(|e| e.to_string())
+    }
+
+    pub async fn get_mod_mesh_preview(
+        &self,
+        mod_id: String,
+    ) -> Result<mod_patches::MeshPreviewData, String> {
+        let mod_uuid = Uuid::parse_str(&mod_id).map_err(|e| e.to_string())?;
+        let dbs = self.game_dbs.lock().await;
+
+        let record = dbs
+            .values()
+            .find_map(|db| db.mods.get(&mod_uuid))
+            .ok_or("Mod not found")?;
+
+        let mod_root = record.path.clone();
+        drop(dbs);
+
+        mod_patches::extract_mod_mesh_preview(&mod_root, 150_000).map_err(|e| e.to_string())
+    }
 }
 
 fn build_file_tree(dir: &Path, root: &Path, depth: usize) -> Vec<FileNode> {

@@ -333,6 +333,16 @@ fn GameAdvancedTab(game_id: String) -> Element {
     let mut auditing = use_signal(|| false);
     let mut applying_tweaks = use_signal(|| false);
 
+    let hunting_mode_on = game.hunting_mode;
+    let mut gui_collect_path = use_signal(|| {
+        game.gui_collect_ini
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default()
+    });
+    let mut log_diagnostics = use_signal(|| None::<Vec<yago_app::LogDiagnostic>>);
+    let mut reading_log = use_signal(|| false);
+
     let profile = {
         let p_id = &game.active_profile_id;
         let db = store.db(&game_id);
@@ -853,6 +863,150 @@ fn GameAdvancedTab(game_id: String) -> Element {
                                         div { style: "font-size: 11px; color: var(--text-sec); line-height: 1.4;",
                                             "{w.message}"
                                         }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        div { class: "settings-section",
+            div { class: "settings-section-head",
+                div {
+                    h3 { class: "settings-section-title mono", "CREATOR DEV SUITE" }
+                    div { class: "setting-desc", "In-game shader hunting mode, live d3d11_log.txt diagnostics, and gui_collect bridge" }
+                }
+            }
+
+            div { class: "setting-row",
+                div { class: "setting-row-left",
+                    div { class: "setting-icon",
+                        IconSvg { name: IconName::Search, size: 18 }
+                    }
+                    div {
+                        div { class: "setting-label", "Hunting Mode (hunting = 2)" }
+                        div { class: "setting-desc", "Enable in-game Numpad keys for hunting shaders and dumping IB/VB buffers" }
+                    }
+                }
+                button {
+                    class: if hunting_mode_on { "toggle-switch on" } else { "toggle-switch" },
+                    onclick: {
+                        let store = store.clone();
+                        let gid = game_id.clone();
+                        move |_| {
+                            let core = store.core.clone();
+                            let gid = gid.clone();
+                            let update = GameConfigUpdate {
+                                hunting_mode: Some(!hunting_mode_on),
+                                ..Default::default()
+                            };
+                            let s = store.clone();
+                            s.call(
+                                async move { core.update_game_config(gid, update).await },
+                                |_, _| {},
+                            );
+                        }
+                    },
+                    div { class: "toggle-knob" }
+                }
+            }
+
+            div { class: "setting-row setting-row-col",
+                div { class: "setting-label", style: "margin-bottom: 4px;", "gui_collect auto_generated.ini Path (Optional Bridge)" }
+                div { style: "display: flex; align-items: center; gap: 8px;",
+                    input {
+                        class: "input mono",
+                        style: "flex: 1; font-size: 11px;",
+                        placeholder: "e.g. C:\\Tools\\gui_collect\\auto_generated.ini",
+                        value: "{(gui_collect_path)()}",
+                        oninput: move |e| gui_collect_path.set(e.value()),
+                        onblur: {
+                            let store = store.clone();
+                            let gid = game_id.clone();
+                            move |_| {
+                                let val = (gui_collect_path)().trim().to_string();
+                                let path_opt = if val.is_empty() { None } else { Some(std::path::PathBuf::from(val)) };
+                                let core = store.core.clone();
+                                let gid = gid.clone();
+                                let update = GameConfigUpdate {
+                                    gui_collect_ini: Some(path_opt),
+                                    ..Default::default()
+                                };
+                                let s = store.clone();
+                                s.call(
+                                    async move { core.update_game_config(gid, update).await },
+                                    |_, _| {},
+                                );
+                            }
+                        },
+                    }
+                }
+            }
+
+            div { style: "margin-top: 10px;",
+                div { style: "display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;",
+                    span { style: "font-size: 11px; font-weight: 600; color: var(--text);", "d3d11_log.txt Diagnostics" }
+                    button {
+                        class: "btn btn-sm",
+                        disabled: (reading_log)(),
+                        onclick: {
+                            let store = store.clone();
+                            let gid = game_id.clone();
+                            move |_| {
+                                let core = store.core.clone();
+                                let gid = gid.clone();
+                                let mut s = store.clone();
+                                spawn(async move {
+                                    reading_log.set(true);
+                                    match core.read_d3d11_diagnostics(gid).await {
+                                        Ok(diags) => {
+                                            let count = diags.len();
+                                            log_diagnostics.set(Some(diags));
+                                            if count == 0 {
+                                                s.toast(ToastKind::Success, "No errors or warnings found in d3d11_log.txt");
+                                            } else {
+                                                s.toast(ToastKind::Info, format!("Parsed {count} diagnostic line(s)"));
+                                            }
+                                        }
+                                        Err(e) => s.toast(ToastKind::Error, e),
+                                    }
+                                    reading_log.set(false);
+                                });
+                            }
+                        },
+                        IconSvg { name: IconName::Refresh, size: 13 }
+                        if (reading_log)() { "READING LOG…" } else { "READ LOG DIAGNOSTICS" }
+                    }
+                }
+
+                if let Some(diags) = (log_diagnostics)() {
+                    if diags.is_empty() {
+                        div { style: "padding: 8px 10px; background: rgba(34, 197, 94, 0.1); border: 1px solid rgba(34, 197, 94, 0.3); border-radius: 4px; font-size: 11px; color: #4ade80;",
+                            "✓ Log is clean. No INI syntax errors, missing resources, or duplicate hashes found."
+                        }
+                    } else {
+                        div { style: "max-height: 220px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; padding: 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px;",
+                            for (idx, d) in diags.iter().enumerate() {
+                                div {
+                                    key: "{idx}",
+                                    style: "padding: 6px 8px; background: var(--panel-2); border-radius: 3px; font-size: 11px; display: flex; flex-direction: column; gap: 3px;",
+                                    div { style: "display: flex; align-items: center; gap: 6px;",
+                                        span {
+                                            class: if d.level == "Error" { "tag tag-danger" } else if d.level == "Warning" { "tag tag-warn" } else { "tag" },
+                                            "{d.level}"
+                                        }
+                                        span { class: "mono", style: "font-size: 10px; color: var(--accent);", "{d.category}" }
+                                        if let Some(f) = &d.file_hint {
+                                            span { class: "mono", style: "font-size: 10px; color: var(--muted);", "[{f}]" }
+                                        }
+                                        if let Some(l) = d.line_number {
+                                            span { class: "mono", style: "font-size: 10px; color: var(--muted);", ":{l}" }
+                                        }
+                                    }
+                                    div { class: "mono", style: "font-size: 10px; color: var(--text-sec); word-break: break-all;",
+                                        "{d.message}"
                                     }
                                 }
                             }

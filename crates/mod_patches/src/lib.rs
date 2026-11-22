@@ -1,16 +1,22 @@
 pub mod buffer_allocator;
 pub mod compiler;
+pub mod diagnostics;
+pub mod dvt;
 pub mod dxbc;
 pub mod error;
 pub mod fixer;
 pub mod ini_merger;
 pub mod key_allocator;
 pub mod merger;
+pub mod mesh;
 pub mod namespacer;
 pub mod presets;
 pub mod validator;
 
 pub use buffer_allocator::BufferAllocator;
+pub use diagnostics::{parse_d3d11_log, LogDiagnostic};
+pub use dvt::{sync_draw_values, DvtSyncReport};
+pub use mesh::{extract_mod_mesh_preview, MeshPreviewData};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CompileOptions {
     pub enable_sfw_toggle: bool,
