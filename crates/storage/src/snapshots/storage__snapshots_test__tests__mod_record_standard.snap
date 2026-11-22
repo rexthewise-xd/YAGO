@@ -31,5 +31,7 @@ config:
   active_preset_id: ~
   ini_anchors: []
   suppress_creditinfo: false
+  shuffle_locked: false
+  context_pool: ~
 enabled: true
 added_at: "[timestamp]"

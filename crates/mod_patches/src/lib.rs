@@ -11,8 +11,24 @@ pub mod presets;
 pub mod validator;
 
 pub use buffer_allocator::BufferAllocator;
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CompileOptions {
+    pub enable_sfw_toggle: bool,
+    pub sfw_toggle_key: String,
+    pub enable_context_swaps: bool,
+}
+
+impl Default for CompileOptions {
+    fn default() -> Self {
+        Self {
+            enable_sfw_toggle: false,
+            sfw_toggle_key: "F9".to_string(),
+            enable_context_swaps: false,
+        }
+    }
+}
+
 pub use compiler::CycleCompiler;
-pub use dxbc::DxbcPatcher;
 pub use error::{Result, WeaverError};
 pub use fixer::{
     apply_mod_fix, has_fix_backup, preview_mod_fix, rollback_mod_fix, FileFixDiff, FixApplyReport,
@@ -44,6 +60,7 @@ pub struct ModProfile {
     pub active_preset_vars: Option<HashMap<String, String>>,
     pub ini_anchors: Vec<IniAnchor>,
     pub suppress_creditinfo: bool,
+    pub context_pool: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -85,8 +102,14 @@ fn determine_category(m: &ModProfile) -> String {
 }
 
 /// Generates a deployment plan from a list of mod profiles.
-pub fn generate_deployment_plan(
+pub fn generate_deployment_plan(mods: Vec<ModProfile>) -> Result<(DeploymentPlan, ConflictReport)> {
+    generate_deployment_plan_with_options(mods, CompileOptions::default())
+}
+
+/// Generates a deployment plan with explicit compile options (SFW switch, Context swaps).
+pub fn generate_deployment_plan_with_options(
     mut mods: Vec<ModProfile>,
+    options: CompileOptions,
 ) -> Result<(DeploymentPlan, ConflictReport)> {
     // Update deploy_path based on category for Globals (Characters handled by CycleCompiler)
     for m in &mut mods {
@@ -102,6 +125,17 @@ pub fn generate_deployment_plan(
         hasher.update(m.uuid.as_bytes());
         hasher.update(m.deploy_path.as_bytes());
     }
+    hasher.update(if options.enable_sfw_toggle {
+        b"sfw1"
+    } else {
+        b"sfw0"
+    });
+    hasher.update(options.sfw_toggle_key.as_bytes());
+    hasher.update(if options.enable_context_swaps {
+        b"ctx1"
+    } else {
+        b"ctx0"
+    });
     let state_hash = format!("{:x}", hasher.finalize());
 
     let mut total_plan = DeploymentPlan {
@@ -109,6 +143,30 @@ pub fn generate_deployment_plan(
         generated_files: Vec::new(),
         state_hash,
     };
+
+    // If SFW toggle is enabled, generate shared 00_Configs/yago_sfw_switch.ini
+    if options.enable_sfw_toggle {
+        let key = if options.sfw_toggle_key.trim().is_empty() {
+            "F9"
+        } else {
+            options.sfw_toggle_key.trim()
+        };
+        let sfw_ini_content = format!(
+            "; YAGO Global SFW/NSFW Switch\n\
+            namespace = YAGO\\SFW\n\n\
+            [Constants]\n\
+            global persist $sfw_mode = 0\n\n\
+            [KeyYagoSfwToggle]\n\
+            key = {}\n\
+            type = cycle\n\
+            $sfw_mode = 0, 1\n",
+            key
+        );
+        total_plan.generated_files.push((
+            PathBuf::from("00_Configs/yago_sfw_switch.ini"),
+            sfw_ini_content,
+        ));
+    }
 
     let mut character_groups: HashMap<String, Vec<ModProfile>> = HashMap::new();
     let mut global_mods = Vec::new();
@@ -126,10 +184,8 @@ pub fn generate_deployment_plan(
 
     // 1. Compile Character Groups (Cycle Logic) -> 22_Characters
     for (name, group_mods) in character_groups {
-        // CycleCompiler needs to be updated to output to 22_Characters/{Name}
-        // or we handle it here? CycleCompiler::compile_character_group handles paths internally.
-        // We will update CycleCompiler separately.
-        let compiled = CycleCompiler::compile_character_group(&name, group_mods)?;
+        let compiled =
+            CycleCompiler::compile_character_group_with_options(&name, group_mods, &options)?;
         total_plan.symlink_map.extend(compiled.plan.symlink_map);
         total_plan
             .generated_files
@@ -403,6 +459,7 @@ ps-t0 = ResourceEffect
             active_preset_vars: None,
             ini_anchors: vec![],
             suppress_creditinfo: false,
+            context_pool: None,
         };
 
         let (files, _report) = process_global_mods(vec![global_mod]).unwrap();

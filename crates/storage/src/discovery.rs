@@ -156,6 +156,8 @@ impl Discovery {
                 pre_launch_cmd: template.and_then(|t| t.pre_launch_cmd.clone()),
                 post_exit_cmd: template.and_then(|t| t.post_exit_cmd.clone()),
                 use_rabbit_wrapper: template.and_then(|t| t.use_rabbit_wrapper).unwrap_or(false),
+                total_playtime_secs: 0,
+                last_played: None,
             };
 
             let mut db = LibraryDatabase::default();

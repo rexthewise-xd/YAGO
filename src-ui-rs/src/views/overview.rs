@@ -2,7 +2,7 @@ use dioxus::prelude::*;
 use storage::models::InstallStatus;
 
 use crate::art::cover_url;
-use crate::components::{status_dot, status_label};
+use crate::components::{status_dot, status_label, Modal};
 use crate::icons::{IconName, IconSvg};
 use crate::state::{Store, ToastKind};
 use crate::views::GameSettingsDrawer;
@@ -41,11 +41,17 @@ pub fn Overview() -> Element {
         .unwrap_or(0);
 
     let status = game.install_status;
-    eprintln!("DIAG overview status={:?} name={} desc_len={}", status, game.name, game.description.len());
+    eprintln!(
+        "DIAG overview status={:?} name={} desc_len={}",
+        status,
+        game.name,
+        game.description.len()
+    );
     let running = (store.running)();
     let launching = (store.launching)();
     let gid = game.id.clone();
     let gid2 = game.id.clone();
+    let wish_gid = game.id.clone();
     let exe_path = game.exe_path.to_string_lossy().to_string();
     let install_path = game.install_path.to_string_lossy().to_string();
 
@@ -60,7 +66,15 @@ pub fn Overview() -> Element {
     let install_gid = game.id.clone();
     let install_name = game.name.clone();
     let mut show_game_settings = use_signal(|| false);
+    let mut show_wish_url = use_signal(|| None::<String>);
+    let mut extracting_wish = use_signal(|| false);
     let settings_gid = game.id.clone();
+
+    let playtime_str = format_playtime(game.total_playtime_secs);
+    let last_played_str = game
+        .last_played
+        .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
+        .unwrap_or_else(|| "Never".to_string());
 
     rsx! {
         div { class: "overview",
@@ -74,6 +88,8 @@ pub fn Overview() -> Element {
                         if !game.version.is_empty() {
                             span { class: "hero-version", "v{game.version}" }
                         }
+                        span { class: "hero-version", "PLAYTIME: {playtime_str}" }
+                        span { class: "hero-version", "LAST: {last_played_str}" }
                     }
                     h1 { class: "hero-title", "{game.name}" }
                     p { class: "hero-desc", "{game.description}" }
@@ -116,6 +132,34 @@ pub fn Overview() -> Element {
                                 },
                                 IconSvg { name: IconName::Refresh, size: 15 }
                                 "REPAIR"
+                            }
+                            button {
+                                class: "btn",
+                                disabled: (extracting_wish)(),
+                                title: "Extract in-game Wish / Warp / Convene URL from web cache",
+                                onclick: {
+                                    let store = store.clone();
+                                    let gid = wish_gid.clone();
+                                    move |_| {
+                                        let core = store.core.clone();
+                                        let gid = gid.clone();
+                                        let mut s = store.clone();
+                                        spawn(async move {
+                                            extracting_wish.set(true);
+                                            match core.extract_wish_url(gid).await {
+                                                Ok(url) => {
+                                                    let _ = document::eval(&format!("navigator.clipboard.writeText({:?})", url));
+                                                    show_wish_url.set(Some(url));
+                                                    s.toast(ToastKind::Success, "Gacha URL extracted & copied to clipboard");
+                                                }
+                                                Err(e) => s.toast(ToastKind::Error, e),
+                                            }
+                                            extracting_wish.set(false);
+                                        });
+                                    }
+                                },
+                                IconSvg { name: IconName::Copy, size: 15 }
+                                if (extracting_wish)() { "EXTRACTING…" } else { "WISH URL" }
                             }
                         } else if matches!(
                             status,
@@ -249,6 +293,14 @@ pub fn Overview() -> Element {
                             {game.active_runner_id.clone().unwrap_or_else(|| "default".to_string())}
                         }
                     }
+                    div { class: "kv",
+                        span { class: "kv-key mono", "PLAYTIME" }
+                        span { class: "kv-val mono", "{playtime_str}" }
+                    }
+                    div { class: "kv",
+                        span { class: "kv-key mono", "LAST PLAYED" }
+                        span { class: "kv-val mono", "{last_played_str}" }
+                    }
                 }
 
                 div { class: "panel",
@@ -274,6 +326,47 @@ pub fn Overview() -> Element {
                     onclose: move |_| show_game_settings.set(false),
                 }
             }
+
+            if let Some(url) = (show_wish_url)() {
+                Modal {
+                    title: "GACHA HISTORY URL",
+                    subtitle: Some("WISH / WARP / CONVENE LINK".to_string()),
+                    onclose: move |_| show_wish_url.set(None),
+
+                    p { class: "wizard-note", "This link contains your temporary in-game gacha authentication token. Copied to clipboard! You can paste it into tracker tools." }
+
+                    div { class: "field-group",
+                        textarea {
+                            class: "input textarea mono",
+                            readonly: true,
+                            rows: 4,
+                            value: "{url}",
+                        }
+                    }
+
+                    div { class: "modal-actions",
+                        button {
+                            class: "btn btn-accent",
+                            onclick: move |_| show_wish_url.set(None),
+                            "DONE"
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn format_playtime(secs: u64) -> String {
+    if secs == 0 {
+        "0m".to_string()
+    } else {
+        let hours = secs / 3600;
+        let mins = (secs % 3600) / 60;
+        if hours > 0 {
+            format!("{}h {}m", hours, mins)
+        } else {
+            format!("{}m", mins)
         }
     }
 }

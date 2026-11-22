@@ -136,6 +136,10 @@ pub struct GameConfig {
     pub post_exit_cmd: Option<String>,
     #[serde(default)]
     pub use_rabbit_wrapper: bool,
+    #[serde(default)]
+    pub total_playtime_secs: u64,
+    #[serde(default)]
+    pub last_played: Option<DateTime<Utc>>,
 }
 
 fn default_true() -> bool {
@@ -184,6 +188,10 @@ pub struct ModConfig {
     pub ini_anchors: Vec<IniAnchor>,
     #[serde(default)]
     pub suppress_creditinfo: bool,
+    #[serde(default)]
+    pub shuffle_locked: bool,
+    #[serde(default)]
+    pub context_pool: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -246,6 +254,14 @@ pub struct Profile {
     pub obs_vkcapture: bool,
     #[serde(default)]
     pub lsfg_vk: bool,
+    #[serde(default)]
+    pub enable_sfw_toggle: bool,
+    #[serde(default)]
+    pub sfw_toggle_key: Option<String>,
+    #[serde(default)]
+    pub shuffle_on_launch: bool,
+    #[serde(default)]
+    pub enable_context_swaps: bool,
     pub added_at: DateTime<Utc>,
 }
 
@@ -269,6 +285,10 @@ impl Default for Profile {
             dxvk_low_latency: false,
             obs_vkcapture: false,
             lsfg_vk: false,
+            enable_sfw_toggle: false,
+            sfw_toggle_key: None,
+            shuffle_on_launch: false,
+            enable_context_swaps: false,
             added_at: Utc::now(),
         }
     }

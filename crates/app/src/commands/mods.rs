@@ -621,6 +621,140 @@ impl AppCore {
         self.emit_library().await;
         Ok(())
     }
+
+    pub async fn update_mod_wardrobe_meta(
+        &self,
+        game_id: String,
+        mod_id: String,
+        shuffle_locked: bool,
+        context_pool: Option<String>,
+    ) -> Result<(), String> {
+        let mod_uuid = Uuid::parse_str(&mod_id).map_err(|e| e.to_string())?;
+        let mut dbs = self.game_dbs.lock().await;
+        let db = dbs.get_mut(&game_id).ok_or("Game not found")?;
+        let record = db.mods.get_mut(&mod_uuid).ok_or("Mod not found")?;
+
+        record.config.shuffle_locked = shuffle_locked;
+        record.config.context_pool = context_pool;
+
+        self.librarian
+            .lock()
+            .await
+            .save_game_db(&game_id, db)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        drop(dbs);
+        self.emit_library().await;
+        Ok(())
+    }
+
+    pub async fn shuffle_character_skins(&self, game_id: String) -> Result<usize, String> {
+        let mut dbs = self.game_dbs.lock().await;
+        let db = dbs.get_mut(&game_id).ok_or("Game not found")?;
+        let game = db.games.get(&game_id).ok_or("Game config not found")?;
+        let p_uuid = Uuid::parse_str(&game.active_profile_id).map_err(|e| e.to_string())?;
+        let profile = db
+            .profiles
+            .get_mut(&p_uuid)
+            .ok_or("Active profile not found")?;
+
+        // 1. Group character skins by compatibility.character
+        let mut char_groups: std::collections::HashMap<String, Vec<&storage::models::ModRecord>> =
+            std::collections::HashMap::new();
+
+        for m in db.mods.values() {
+            let is_char = m.config.mod_type.as_deref() == Some("character")
+                || (m.compatibility.character != "Unknown"
+                    && m.compatibility.character != "Global/Other"
+                    && !m.compatibility.character.is_empty());
+
+            if is_char {
+                char_groups
+                    .entry(m.compatibility.character.clone())
+                    .or_default()
+                    .push(m);
+            }
+        }
+
+        let mut shuffled_count = 0usize;
+        let mut new_enabled_ids: std::collections::HashSet<Uuid> =
+            profile.enabled_mod_ids.iter().cloned().collect();
+
+        // Seed with timestamp nanoseconds
+        let mut seed = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos() as u64;
+
+        for (_char_name, skins) in char_groups {
+            // Check if there is already an enabled locked skin for this character
+            let has_locked_enabled = skins
+                .iter()
+                .any(|s| s.config.shuffle_locked && new_enabled_ids.contains(&s.id));
+
+            if has_locked_enabled {
+                continue;
+            }
+
+            // Collect unlocked skins for this character
+            let unlocked_skins: Vec<&storage::models::ModRecord> = skins
+                .into_iter()
+                .filter(|s| !s.config.shuffle_locked)
+                .collect();
+
+            if unlocked_skins.len() >= 2 {
+                // Remove all unlocked skins of this character from enabled set
+                for s in &unlocked_skins {
+                    new_enabled_ids.remove(&s.id);
+                }
+
+                // Simple LCG pseudo-random generator
+                seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+                let chosen_idx = (seed as usize) % unlocked_skins.len();
+                let chosen_mod = unlocked_skins[chosen_idx];
+
+                new_enabled_ids.insert(chosen_mod.id);
+                shuffled_count += 1;
+            }
+        }
+
+        if shuffled_count > 0 {
+            profile.enabled_mod_ids = new_enabled_ids.into_iter().collect();
+            self.librarian
+                .lock()
+                .await
+                .save_game_db(&game_id, db)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+
+        drop(dbs);
+        if shuffled_count > 0 {
+            self.emit_library().await;
+        }
+
+        Ok(shuffled_count)
+    }
+
+    pub async fn export_clean_mod(
+        &self,
+        mod_id: String,
+        dest_zip: String,
+    ) -> Result<usize, String> {
+        let mod_uuid = Uuid::parse_str(&mod_id).map_err(|e| e.to_string())?;
+        let dbs = self.game_dbs.lock().await;
+
+        let record = dbs
+            .values()
+            .find_map(|db| db.mods.get(&mod_uuid))
+            .ok_or("Mod not found")?;
+
+        let mod_root = record.path.clone();
+        drop(dbs);
+
+        storage::export_clean_mod_zip(&mod_root, Path::new(&dest_zip)).map_err(|e| e.to_string())
+    }
 }
 
 fn build_file_tree(dir: &Path, root: &Path, depth: usize) -> Vec<FileNode> {
@@ -907,5 +1041,119 @@ mod tests {
             "INI file must contain 'key = k', got: {}",
             on_disk
         );
+    }
+
+    #[tokio::test]
+    async fn test_shuffle_character_skins_respects_locked() {
+        let dir = tempdir().unwrap();
+        let core = init_with_dir(dir.path().to_path_buf()).await.unwrap();
+
+        let game_id = "genshin".to_string();
+        let char_name = "Raiden".to_string();
+
+        let mod1_id = Uuid::new_v4();
+        let mod2_id = Uuid::new_v4();
+        let mod3_locked_id = Uuid::new_v4();
+
+        let make_mod = |id: Uuid, name: &str, locked: bool| ModRecord {
+            id,
+            owner_game_id: game_id.clone(),
+            path: dir.path().join(name),
+            size: "0".to_string(),
+            meta: storage::models::ModMetadata {
+                name: name.to_string(),
+                version: "1.0".to_string(),
+                author: "Author".to_string(),
+                url: None,
+                preview_image: None,
+                description: None,
+                gb_mod_id: None,
+                gb_date_updated: None,
+            },
+            compatibility: storage::models::ModCompatibility {
+                game: game_id.clone(),
+                character: char_name.clone(),
+                hashes: vec![],
+                fingerprint: "".to_string(),
+            },
+            config: storage::models::ModConfig {
+                mod_type: Some("character".to_string()),
+                tags: vec![],
+                keybinds: std::collections::HashMap::new(),
+                shuffle_locked: locked,
+                ..Default::default()
+            },
+            enabled: true,
+            added_at: chrono::Utc::now(),
+        };
+
+        let profile_id = Uuid::new_v4();
+        let mut db = storage::LibraryDatabase::default();
+        db.games.insert(
+            game_id.clone(),
+            storage::models::GameConfig {
+                id: game_id.clone(),
+                active_profile_id: profile_id.to_string(),
+                ..Default::default()
+            },
+        );
+
+        db.mods.insert(mod1_id, make_mod(mod1_id, "skin1", false));
+        db.mods.insert(mod2_id, make_mod(mod2_id, "skin2", false));
+        db.mods.insert(
+            mod3_locked_id,
+            make_mod(mod3_locked_id, "skin3_locked", true),
+        );
+
+        db.profiles.insert(
+            profile_id,
+            storage::models::Profile {
+                id: profile_id,
+                name: "Default".to_string(),
+                enabled_mod_ids: vec![mod1_id, mod3_locked_id],
+                ..Default::default()
+            },
+        );
+
+        {
+            let mut dbs = core.game_dbs.lock().await;
+            dbs.insert(game_id.clone(), db);
+        }
+
+        // Case 1: When a locked mod is enabled, shuffle does NOT change it
+        let shuffled = core.shuffle_character_skins(game_id.clone()).await.unwrap();
+        assert_eq!(
+            shuffled, 0,
+            "Character with enabled locked skin must not be shuffled"
+        );
+
+        // Case 2: When locked mod is disabled, only the unlocked skins (skin1, skin2) get shuffled
+        {
+            let mut dbs = core.game_dbs.lock().await;
+            let db = dbs.get_mut(&game_id).unwrap();
+            let prof = db.profiles.get_mut(&profile_id).unwrap();
+            prof.enabled_mod_ids = vec![mod1_id];
+        }
+
+        let shuffled = core.shuffle_character_skins(game_id.clone()).await.unwrap();
+        assert_eq!(
+            shuffled, 1,
+            "Character with >=2 unlocked skins must be shuffled"
+        );
+
+        {
+            let dbs = core.game_dbs.lock().await;
+            let db = dbs.get(&game_id).unwrap();
+            let prof = db.profiles.get(&profile_id).unwrap();
+            // mod3_locked_id should still not be enabled
+            assert!(!prof.enabled_mod_ids.contains(&mod3_locked_id));
+            // Exactly 1 skin between mod1 and mod2 should be enabled
+            let has_mod1 = prof.enabled_mod_ids.contains(&mod1_id);
+            let has_mod2 = prof.enabled_mod_ids.contains(&mod2_id);
+            assert!(
+                has_mod1 ^ has_mod2,
+                "Exactly one unlocked skin must be chosen"
+            );
+        }
     }
 }

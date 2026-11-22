@@ -198,6 +198,7 @@ impl AppCore {
                     active_preset_vars,
                     ini_anchors: record.config.ini_anchors.clone(),
                     suppress_creditinfo,
+                    context_pool: record.config.context_pool.clone(),
                 });
             }
         };
@@ -211,8 +212,20 @@ impl AppCore {
                 add_to_list(mid);
             }
         }
-        let (mut plan, report) = mod_patches::generate_deployment_plan(profiles_for_weaver)
-            .map_err(|e| e.to_string())?;
+        let compile_options = mod_patches::CompileOptions {
+            enable_sfw_toggle: profile.enable_sfw_toggle,
+            sfw_toggle_key: profile
+                .sfw_toggle_key
+                .clone()
+                .unwrap_or_else(|| "F9".to_string()),
+            enable_context_swaps: profile.enable_context_swaps,
+        };
+
+        let (mut plan, report) = mod_patches::generate_deployment_plan_with_options(
+            profiles_for_weaver,
+            compile_options,
+        )
+        .map_err(|e| e.to_string())?;
 
         let lib_guard = self.librarian.lock().await;
         let paths = lib_guard.game_paths(&game_id);
@@ -611,16 +624,40 @@ impl AppCore {
                 .map_err(|e| e.to_string())?;
                 options.injection_method = launcher::InjectionMethod::Proxy;
             }
+            if profile.shuffle_on_launch {
+                let _ = self.shuffle_character_skins(game_id.clone()).await;
+            }
+
             self.deploy_mods(exe_path.to_string_lossy().to_string(), false)
                 .await?;
+            let session_start = std::time::Instant::now();
             match Launcher.launch(options).await {
                 Ok(_) => {
                     *self.running_game_name.lock().await = Some(exe_name.clone());
                     self.emit(AppEvent::GameStarted);
                     let core = self.clone();
+                    let post_game_id = game_id.clone();
 
                     tokio::spawn(async move {
                         Monitor::wait_for_exit(exe_name).await;
+                        let elapsed = session_start.elapsed().as_secs();
+
+                        {
+                            let mut dbs = core.game_dbs.lock().await;
+                            if let Some(db) = dbs.get_mut(&post_game_id) {
+                                if let Some(config) = db.games.get_mut(&post_game_id) {
+                                    config.total_playtime_secs += elapsed;
+                                    config.last_played = Some(chrono::Utc::now());
+                                    let _ = core
+                                        .librarian
+                                        .lock()
+                                        .await
+                                        .save_game_db(&post_game_id, db)
+                                        .await;
+                                }
+                            }
+                        }
+                        core.emit_library().await;
 
                         if method == launcher::InjectionMethod::Proxy {
                             let _ = LoaderContext::uninstall_loader(

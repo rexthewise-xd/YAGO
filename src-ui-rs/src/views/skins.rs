@@ -15,6 +15,7 @@ pub fn SkinsView() -> Element {
     let mut search = use_signal(String::new);
     let mut selected_char = use_signal(|| None::<String>);
     let mut importing = use_signal(|| false);
+    let mut shuffling = use_signal(|| false);
 
     let Some(game) = store.selected_game() else {
         return rsx! {
@@ -36,9 +37,7 @@ pub fn SkinsView() -> Element {
     let roster_res = use_resource(move || {
         let core = core.clone();
         let gid = gid_res.clone();
-        async move {
-            core.get_skin_inventory(gid).await.unwrap_or_default()
-        }
+        async move { core.get_skin_inventory(gid).await.unwrap_or_default() }
     });
 
     let roster: HashMap<String, CharacterGroup> = (roster_res)().unwrap_or_default();
@@ -52,7 +51,10 @@ pub fn SkinsView() -> Element {
     filtered.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
 
     let selected_group = sel.as_ref().and_then(|name| {
-        filtered.iter().find(|(n, _)| n == name).map(|(n, g)| (n.clone(), g.clone()))
+        filtered
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(n, g)| (n.clone(), g.clone()))
     });
 
     rsx! {
@@ -72,6 +74,36 @@ pub fn SkinsView() -> Element {
                             value: "{(search)()}",
                             oninput: move |evt| search.set(evt.value()),
                         }
+                    }
+                    button {
+                        class: "btn",
+                        disabled: (shuffling)(),
+                        title: "Shuffle unlocked skins across characters",
+                        onclick: {
+                            let store = store.clone();
+                            let gid = game_id.clone();
+                            move |_| {
+                                let core = store.core.clone();
+                                let gid = gid.clone();
+                                let mut s = store.clone();
+                                spawn(async move {
+                                    shuffling.set(true);
+                                    match core.shuffle_character_skins(gid).await {
+                                        Ok(count) => {
+                                            if count > 0 {
+                                                s.toast(ToastKind::Success, format!("Shuffled {count} character(s)"));
+                                            } else {
+                                                s.toast(ToastKind::Info, "No unlocked characters eligible to shuffle");
+                                            }
+                                        }
+                                        Err(e) => s.toast(ToastKind::Error, e),
+                                    }
+                                    shuffling.set(false);
+                                });
+                            }
+                        },
+                        IconSvg { name: IconName::Refresh, size: 15 }
+                        if (shuffling)() { "SHUFFLING…" } else { "SHUFFLE NOW" }
                     }
                     button {
                         class: "btn btn-accent",
@@ -199,8 +231,13 @@ fn CycleEditor(
 
     let db = store.db(&game_id);
     let game = store.game(&game_id);
-    let profile = db.as_ref().and_then(|d| game.as_ref().and_then(|g| active_profile(d, g).cloned()));
-    let load_order = profile.as_ref().map(|p| p.load_order.clone()).unwrap_or_default();
+    let profile = db
+        .as_ref()
+        .and_then(|d| game.as_ref().and_then(|g| active_profile(d, g).cloned()));
+    let load_order = profile
+        .as_ref()
+        .map(|p| p.load_order.clone())
+        .unwrap_or_default();
 
     let mut sorted_skins: Vec<ModSnippet> = group.skins.clone();
     sorted_skins.sort_by_key(|s| {
@@ -438,16 +475,29 @@ fn CycleSkinRow(
 
 fn reorder_skin(store: Store, game_id: String, mod_id: String, delta: i32) {
     let Some(db) = store.db(&game_id) else { return };
-    let Some(game) = store.game(&game_id) else { return };
-    let Some(profile) = active_profile(&db, &game) else { return };
+    let Some(game) = store.game(&game_id) else {
+        return;
+    };
+    let Some(profile) = active_profile(&db, &game) else {
+        return;
+    };
     let mut order = profile.load_order.clone();
-    let Some(uid) = Uuid::parse_str(&mod_id).ok() else { return };
-    let Some(idx) = order.iter().position(|id| *id == uid) else { return };
+    let Some(uid) = Uuid::parse_str(&mod_id).ok() else {
+        return;
+    };
+    let Some(idx) = order.iter().position(|id| *id == uid) else {
+        return;
+    };
     let new_idx = (idx as i32 + delta).clamp(0, order.len() as i32 - 1) as usize;
-    if new_idx == idx { return; }
+    if new_idx == idx {
+        return;
+    }
     order.swap(idx, new_idx);
 
     let core = store.core.clone();
     let s = store.clone();
-    s.call(async move { core.set_load_order(game_id, order).await }, |_, _| {});
+    s.call(
+        async move { core.set_load_order(game_id, order).await },
+        |_, _| {},
+    );
 }

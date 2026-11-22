@@ -20,13 +20,14 @@ pub use commands::library::{
     FileNode, GameConfigUpdate, IdentifiedGame, LoaderProgress, ProfileUpdate, ProtonProgress,
     SetupStatus,
 };
+pub use commands::profiles::BundleImportReport;
 pub use launcher::{GraphicsAuditWarning, InjectionMethod};
 pub use mod_patches::{
     FileFixDiff, FixApplyReport, FixPreview, FixRuleSet, IniAnchor, VariantPreset,
 };
 pub use resources::effects::{EffectLibraryStatus, SharedEffectLibrary, TexFxConfig};
 pub use resources::gamebanana::{GbModDetail, GbModFile, GbModSummary, YagoDeepLink};
-pub use storage::{DiscoveredGame, RemoteCatalogEntry, StartMethod};
+pub use storage::{BundleModEntry, DiscoveredGame, LoadoutBundle, RemoteCatalogEntry, StartMethod};
 
 use include_dir::{include_dir, Dir};
 

@@ -1,6 +1,7 @@
 use crate::error::Result;
 use crate::merger::Merger;
 use crate::namespacer::Namespacer;
+pub use crate::CompileOptions;
 use crate::ModProfile;
 use ini::ast::{IniItem, Section};
 use std::path::PathBuf;
@@ -14,10 +15,19 @@ pub struct CompiledGroup {
 pub struct CycleCompiler;
 
 impl CycleCompiler {
-    /// Compiles a group of mods for a single character into an isolated virtual structure.
+    /// Compiles a group of mods for a single character into an isolated virtual structure with default options.
     pub fn compile_character_group(
         character_name: &str,
         mods: Vec<ModProfile>,
+    ) -> Result<CompiledGroup> {
+        Self::compile_character_group_with_options(character_name, mods, &CompileOptions::default())
+    }
+
+    /// Compiles a group of mods for a single character into an isolated virtual structure with explicit options.
+    pub fn compile_character_group_with_options(
+        character_name: &str,
+        mods: Vec<ModProfile>,
+        options: &CompileOptions,
     ) -> Result<CompiledGroup> {
         let mut plan = DeploymentPlan {
             symlink_map: Vec::new(),
@@ -31,19 +41,35 @@ impl CycleCompiler {
         let var_name = format!("wardrobe_{}", char_normalized);
         let active_var_name = format!("wardrobe_active_{}", char_normalized);
 
+        // Analyze character group for SFW / NSFW mix
+        let has_nsfw_skin = mods.iter().any(|m| m.nsfw);
+        let first_sfw_idx = mods.iter().position(|m| !m.nsfw).map(|idx| idx + 1); // 1-based skin index
+        let apply_sfw_logic = options.enable_sfw_toggle && has_nsfw_skin && first_sfw_idx.is_some();
+        let fallback_sfw_index = first_sfw_idx.unwrap_or(0);
+
         // 1. Unified Character Constants
+        let mut constants_items = vec![
+            IniItem::Pair {
+                key: format!("global persist ${}", var_name),
+                value: "0".to_string(), // 0 is Vanilla
+            },
+            IniItem::Pair {
+                key: format!("global ${}", active_var_name),
+                value: "0".to_string(),
+            },
+        ];
+
+        // Declare $\global\tracking\swimming = 0 if context swaps are enabled so validator does not flag as ghost
+        if options.enable_context_swaps {
+            constants_items.push(IniItem::Pair {
+                key: "global $\\global\\tracking\\swimming".to_string(),
+                value: "0".to_string(),
+            });
+        }
+
         let constants = Section {
             name: "Constants".to_string(),
-            items: vec![
-                IniItem::Pair {
-                    key: format!("global persist ${}", var_name),
-                    value: "0".to_string(), // 0 is Vanilla
-                },
-                IniItem::Pair {
-                    key: format!("global ${}", active_var_name),
-                    value: "0".to_string(),
-                },
-            ],
+            items: constants_items,
         };
         all_sections.push(constants);
 
@@ -110,6 +136,55 @@ impl CycleCompiler {
                 );
             }
 
+            // Determine compound condition for this skin
+            // Base wardrobe condition:
+            let mut wardrobe_condition = format!("${} == {}", var_name, skin_index);
+
+            // SFW / NSFW handling
+            if apply_sfw_logic {
+                if mod_profile.nsfw {
+                    // NSFW skin only renders when $\YAGO\SFW\sfw_mode == 0
+                    wardrobe_condition =
+                        format!("{} && $\\YAGO\\SFW\\sfw_mode == 0", wardrobe_condition);
+                } else if skin_index == fallback_sfw_index {
+                    // Fallback SFW skin renders if directly selected OR if current selection is an NSFW skin and sfw_mode == 1
+                    let nsfw_indices: Vec<String> = mods
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, m)| m.nsfw)
+                        .map(|(idx, _)| format!("${} == {}", var_name, idx + 1))
+                        .collect();
+
+                    if !nsfw_indices.is_empty() {
+                        let nsfw_cond = nsfw_indices.join(" || ");
+                        wardrobe_condition = format!(
+                            "(${} == {}) || (({}) && $\\YAGO\\SFW\\sfw_mode == 1)",
+                            var_name, skin_index, nsfw_cond
+                        );
+                    }
+                }
+            }
+
+            // Context-Aware Swimming Gates
+            if options.enable_context_swaps {
+                let pool = mod_profile
+                    .context_pool
+                    .as_deref()
+                    .unwrap_or("")
+                    .to_lowercase();
+                if pool == "aqua" || pool == "swimming" {
+                    wardrobe_condition = format!(
+                        "{} && $\\global\\tracking\\swimming == 1",
+                        wardrobe_condition
+                    );
+                } else if pool == "land" {
+                    wardrobe_condition = format!(
+                        "{} && $\\global\\tracking\\swimming == 0",
+                        wardrobe_condition
+                    );
+                }
+            }
+
             // 3. Process Sections
             for section in &mut unified_doc.sections {
                 let name_lower = section.name.to_lowercase();
@@ -124,10 +199,10 @@ impl CycleCompiler {
                 }
 
                 // Wrap Overrides in Wardrobe Gates (Router Protocol)
-                let _ = Merger::wrap_in_wardrobe_gate(section, &var_name, skin_index);
+                let _ = Merger::wrap_in_logic_gate(section, &wardrobe_condition);
 
                 // Add collision-free on-screen character tracking ($wardrobe_active_{char} = 1)
-                // Inside each [TextureOverride*] section (after declarative headers, outside the if $wardrobe_{char} == {skin_index} gate so Vanilla 0 is also tracked)
+                // Inside each [TextureOverride*] section (after declarative headers, outside the if gate so Vanilla 0 is also tracked)
                 if name_lower.starts_with("textureoverride") {
                     let insert_idx = section
                         .items
@@ -278,6 +353,7 @@ ps-t0 = ResourceAltDiffuse
             active_preset_vars: None,
             ini_anchors: vec![],
             suppress_creditinfo: false,
+            context_pool: None,
         };
 
         let mod2 = ModProfile {
@@ -292,6 +368,7 @@ ps-t0 = ResourceAltDiffuse
             active_preset_vars: None,
             ini_anchors: vec![],
             suppress_creditinfo: false,
+            context_pool: None,
         };
 
         let compiled = CycleCompiler::compile_character_group("Keqing", vec![mod1, mod2]).unwrap();
@@ -331,6 +408,101 @@ ps-t0 = ResourceAltDiffuse
         assert!(ini_content.contains("condition = $wardrobe_keqing == 1"));
 
         // 6. Verify serialized merged.ini parses cleanly back through parse_ini and passes Validator::validate_logic
+        let (_, doc) = ini::parser::parse_ini(ini_content).expect("merged.ini must parse cleanly");
+        Validator::validate_logic(&doc).expect("merged.ini must pass Validator::validate_logic");
+    }
+
+    #[test]
+    fn test_compile_character_group_sfw_toggle_and_context_swaps() {
+        let dir = tempdir().unwrap();
+
+        let mod_sfw_dir = dir.path().join("mod_sfw");
+        fs::create_dir_all(&mod_sfw_dir).unwrap();
+        let mod_sfw_ini = mod_sfw_dir.join("sfw.ini");
+        fs::write(
+            &mod_sfw_ini,
+            r#"
+[TextureOverrideBody]
+hash = aabbccdd
+match_first_index = 0
+vb0 = ResourceSfwVB0
+"#,
+        )
+        .unwrap();
+
+        let mod_nsfw_dir = dir.path().join("mod_nsfw");
+        fs::create_dir_all(&mod_nsfw_dir).unwrap();
+        let mod_nsfw_ini = mod_nsfw_dir.join("nsfw.ini");
+        fs::write(
+            &mod_nsfw_ini,
+            r#"
+[TextureOverrideBody]
+hash = aabbccdd
+match_first_index = 0
+vb0 = ResourceNsfwVB0
+"#,
+        )
+        .unwrap();
+
+        let mod_sfw = ModProfile {
+            uuid: "sfw-1111-1111".to_string(),
+            mod_root: mod_sfw_dir,
+            ini_paths: vec![mod_sfw_ini],
+            deploy_path: "22_Characters/Raiden/Skin_0".to_string(),
+            character: "Raiden".to_string(),
+            mod_type: "character".to_string(),
+            nsfw: false,
+            tags: vec![],
+            active_preset_vars: None,
+            ini_anchors: vec![],
+            suppress_creditinfo: false,
+            context_pool: Some("land".to_string()),
+        };
+
+        let mod_nsfw = ModProfile {
+            uuid: "nsfw-2222-2222".to_string(),
+            mod_root: mod_nsfw_dir,
+            ini_paths: vec![mod_nsfw_ini],
+            deploy_path: "22_Characters/Raiden/Skin_1".to_string(),
+            character: "Raiden".to_string(),
+            mod_type: "character".to_string(),
+            nsfw: true,
+            tags: vec!["nsfw".to_string()],
+            active_preset_vars: None,
+            ini_anchors: vec![],
+            suppress_creditinfo: false,
+            context_pool: Some("aqua".to_string()),
+        };
+
+        let options = CompileOptions {
+            enable_sfw_toggle: true,
+            sfw_toggle_key: "F9".to_string(),
+            enable_context_swaps: true,
+        };
+
+        let compiled = CycleCompiler::compile_character_group_with_options(
+            "Raiden",
+            vec![mod_sfw, mod_nsfw],
+            &options,
+        )
+        .unwrap();
+
+        let (_, ini_content) = compiled
+            .plan
+            .generated_files
+            .iter()
+            .find(|(path, _)| path.ends_with("merged.ini"))
+            .expect("merged.ini must be generated");
+
+        // 1. Verify SFW switch gate
+        assert!(ini_content.contains("$\\YAGO\\SFW\\sfw_mode == 0"));
+        assert!(ini_content.contains("$\\YAGO\\SFW\\sfw_mode == 1"));
+
+        // 2. Verify Context swap gates (swimming)
+        assert!(ini_content.contains("$\\global\\tracking\\swimming == 0"));
+        assert!(ini_content.contains("$\\global\\tracking\\swimming == 1"));
+
+        // 3. Verify Validator::validate_logic passes cleanly
         let (_, doc) = ini::parser::parse_ini(ini_content).expect("merged.ini must parse cleanly");
         Validator::validate_logic(&doc).expect("merged.ini must pass Validator::validate_logic");
     }

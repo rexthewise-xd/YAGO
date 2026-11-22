@@ -5,6 +5,7 @@ use yago_app::{FileNode, FixPreview, IniAnchor};
 use crate::components::Confirm;
 use crate::icons::{IconName, IconSvg};
 use crate::modutil::{is_nsfw, mod_preview_url, tag_class, MoveDir};
+use crate::picker::pick_save_file;
 use crate::state::{Store, ToastKind};
 
 #[derive(Clone, Copy, PartialEq)]
@@ -51,6 +52,7 @@ pub fn ModInspector(
     let mut confirm_delete = use_signal(|| false);
     let mut previewing_fix = use_signal(|| false);
     let mut applying_fix = use_signal(|| false);
+    let mut exporting_clean = use_signal(|| false);
     let mut fix_preview = use_signal(|| None::<FixPreview>);
     let mut backup_refresh = use_signal(|| 0usize);
     let mut capturing_keybind = use_signal(|| None::<String>);
@@ -284,6 +286,78 @@ pub fn ModInspector(
                                     }
                                 } else {
                                     button { class: "tag-add", onclick: move |_| adding_tag.set(true), IconSvg { name: IconName::Add, size: 11 } "ADD TAG" }
+                                }
+                            }
+                        }
+
+                        div { class: "info-tags",
+                            div { class: "field-label mono", IconSvg { name: IconName::Refresh, size: 13 } "WARDROBE & SHUFFLE CONTROLS" }
+                            div { style: "display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 6px; padding: 6px 10px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px;",
+                                div { style: "display: flex; align-items: center; gap: 8px;",
+                                    button {
+                                        class: if record.config.shuffle_locked { "toggle-switch on" } else { "toggle-switch" },
+                                        title: "Lock from Shuffle-on-Launch",
+                                        onclick: {
+                                            let store = store.clone();
+                                            let gid = game_id.clone();
+                                            let mid = mod_id.clone();
+                                            let current_locked = record.config.shuffle_locked;
+                                            let ctx = record.config.context_pool.clone();
+                                            move |_| {
+                                                let core = store.core.clone();
+                                                let gid = gid.clone();
+                                                let mid = mid.clone();
+                                                let ctx = ctx.clone();
+                                                let mut s = store.clone();
+                                                spawn(async move {
+                                                    match core.update_mod_wardrobe_meta(gid, mid, !current_locked, ctx).await {
+                                                        Ok(_) => s.toast(ToastKind::Success, if !current_locked { "Mod locked from shuffle" } else { "Mod unlocked for shuffle" }),
+                                                        Err(e) => s.toast(ToastKind::Error, e),
+                                                    }
+                                                });
+                                            }
+                                        },
+                                        div { class: "toggle-knob" }
+                                    }
+                                    div {
+                                        div { style: "font-size: 11px; font-weight: 600; color: var(--text);", "Lock from Shuffle" }
+                                        div { style: "font-size: 9px; color: var(--muted);", "Preserve activation state when rolling skins" }
+                                    }
+                                }
+
+                                div { style: "display: flex; align-items: center; gap: 6px;",
+                                    span { class: "mono", style: "font-size: 10px; color: var(--muted);", "Pool:" }
+                                    select {
+                                        class: "input select-sm mono",
+                                        style: "font-size: 11px; padding: 2px 6px;",
+                                        value: "{record.config.context_pool.as_deref().unwrap_or(\"both\")}",
+                                        onchange: {
+                                            let store = store.clone();
+                                            let gid = game_id.clone();
+                                            let mid = mod_id.clone();
+                                            let locked = record.config.shuffle_locked;
+                                            move |e: Event<FormData>| {
+                                                let pool_val = match e.value().as_str() {
+                                                    "land" => Some("land".to_string()),
+                                                    "aqua" => Some("aqua".to_string()),
+                                                    _ => None,
+                                                };
+                                                let core = store.core.clone();
+                                                let gid = gid.clone();
+                                                let mid = mid.clone();
+                                                let mut s = store.clone();
+                                                spawn(async move {
+                                                    match core.update_mod_wardrobe_meta(gid, mid, locked, pool_val).await {
+                                                        Ok(_) => s.toast(ToastKind::Success, "Context pool updated"),
+                                                        Err(e) => s.toast(ToastKind::Error, e),
+                                                    }
+                                                });
+                                            }
+                                        },
+                                        option { value: "both", "Both (Universal)" }
+                                        option { value: "land", "Land Only" }
+                                        option { value: "aqua", "Aqua (Swimming)" }
+                                    }
                                 }
                             }
                         }
@@ -836,6 +910,37 @@ pub fn ModInspector(
                                 },
                                 IconSvg { name: IconName::Folder, size: 15 }
                                 "OPEN MOD FOLDER"
+                            }
+                            button {
+                                class: "btn btn-block",
+                                disabled: (exporting_clean)(),
+                                onclick: {
+                                    let store = store.clone();
+                                    let mid = mod_id.clone();
+                                    let mname = record.meta.name.clone();
+                                    move |_| {
+                                        let core = store.core.clone();
+                                        let mid = mid.clone();
+                                        let mname = mname.clone();
+                                        let mut s = store.clone();
+                                        spawn(async move {
+                                            let default_name = format!("{}_clean.zip", mname.replace(' ', "_"));
+                                            if let Some(dest) = pick_save_file("Export Clean Mod Archive", &default_name).await {
+                                                exporting_clean.set(true);
+                                                let dest_str = dest.display().to_string();
+                                                match core.export_clean_mod(mid, dest_str.clone()).await {
+                                                    Ok(count) => {
+                                                        s.toast(ToastKind::Success, format!("Clean mod exported ({count} files) to {dest_str}"));
+                                                    }
+                                                    Err(e) => s.toast(ToastKind::Error, e),
+                                                }
+                                                exporting_clean.set(false);
+                                            }
+                                        });
+                                    }
+                                },
+                                IconSvg { name: IconName::Download, size: 15 }
+                                if (exporting_clean)() { "EXPORTING…" } else { "EXPORT CLEAN .ZIP" }
                             }
                             button {
                                 class: "btn btn-block",

@@ -19,6 +19,10 @@ pub fn LoadoutsView() -> Element {
     let mut rename_val = use_signal(String::new);
     let mut delete_target = use_signal(|| None::<(String, String)>); // (id, name)
     let mut export_code = use_signal(|| None::<(String, String)>); // (profile_name, code)
+    let mut export_bundle_json = use_signal(|| None::<(String, String)>);
+    let mut show_import_bundle_modal = use_signal(|| false);
+    let mut import_json_input = use_signal(String::new);
+    let mut import_bundle_report = use_signal(|| None::<yago_app::BundleImportReport>);
 
     let Some(game) = store.selected_game() else {
         return rsx! {
@@ -52,6 +56,12 @@ pub fn LoadoutsView() -> Element {
         .cloned()
         .or_else(|| profiles.first().cloned());
 
+    let inspect_pname = inspect_profile
+        .as_ref()
+        .map(|p| p.name.clone())
+        .unwrap_or_default();
+    let has_inspect = inspect_profile.is_some();
+
     let profile_count = profiles.len();
     let active_profile_name = profiles
         .iter()
@@ -79,6 +89,45 @@ pub fn LoadoutsView() -> Element {
                         },
                         IconSvg { name: IconName::Add, size: 15 }
                         "NEW LOADOUT"
+                    }
+                    button {
+                        class: "btn",
+                        disabled: !has_inspect,
+                        onclick: {
+                            let store = store.clone();
+                            let gid = game_id.clone();
+                            let pid = selected_id.clone();
+                            let pname = inspect_pname.clone();
+                            move |_| {
+                                let core = store.core.clone();
+                                let gid = gid.clone();
+                                let pid = pid.clone();
+                                let pname = pname.clone();
+                                let mut s = store.clone();
+                                spawn(async move {
+                                    match core.export_profile_bundle(gid, pid).await {
+                                        Ok(json) => {
+                                            let _ = document::eval(&format!("navigator.clipboard.writeText({:?})", json));
+                                            export_bundle_json.set(Some((pname, json)));
+                                            s.toast(ToastKind::Success, "Loadout bundle JSON copied to clipboard");
+                                        }
+                                        Err(e) => s.toast(ToastKind::Error, e),
+                                    }
+                                });
+                            }
+                        },
+                        IconSvg { name: IconName::Copy, size: 14 }
+                        "EXPORT JSON"
+                    }
+                    button {
+                        class: "btn",
+                        onclick: move |_| {
+                            import_json_input.set(String::new());
+                            import_bundle_report.set(None);
+                            show_import_bundle_modal.set(true);
+                        },
+                        IconSvg { name: IconName::Download, size: 14 }
+                        "IMPORT JSON"
                     }
                 }
             }
@@ -413,6 +462,110 @@ pub fn LoadoutsView() -> Element {
                     }
                 }
             }
+
+            if let Some((pname, json)) = (export_bundle_json)() {
+                Modal {
+                    title: format!("EXPORT: {pname}"),
+                    subtitle: Some("SHAREABLE LOADOUT BUNDLE JSON".to_string()),
+                    onclose: move |_| export_bundle_json.set(None),
+
+                    p { class: "wizard-note", "Share this complete loadout bundle with other players. It encodes all enabled mods, load order indices, and variant presets." }
+
+                    div { class: "field-group",
+                        textarea {
+                            class: "input textarea mono",
+                            readonly: true,
+                            rows: 8,
+                            value: "{json}",
+                        }
+                    }
+
+                    div { class: "modal-actions",
+                        button {
+                            class: "btn btn-accent",
+                            onclick: move |_| export_bundle_json.set(None),
+                            "DONE"
+                        }
+                    }
+                }
+            }
+
+            if (show_import_bundle_modal)() {
+                Modal {
+                    title: "IMPORT LOADOUT BUNDLE",
+                    subtitle: Some("PASTE JSON BUNDLE".to_string()),
+                    onclose: move |_| show_import_bundle_modal.set(false),
+
+                    if let Some(rep) = (import_bundle_report)() {
+                        div { style: "display: flex; flex-direction: column; gap: 8px;",
+                            div { class: "wizard-note", "Bundle imported successfully!" }
+                            div { class: "stat-row mono",
+                                span { "{rep.matched_count} MODS MATCHED & ENABLED" }
+                                span { "{rep.missing_mods.len()} MODS MISSING LOCALLY" }
+                            }
+                            if !rep.missing_mods.is_empty() {
+                                div { style: "font-size: 11px; color: var(--warn); margin-top: 4px;",
+                                    "Missing mods: "
+                                    for (idx, m) in rep.missing_mods.iter().enumerate() {
+                                        span { class: "mono", if idx > 0 { ", " } else { "" } "{m}" }
+                                    }
+                                }
+                            }
+                            div { class: "modal-actions",
+                                button {
+                                    class: "btn btn-accent",
+                                    onclick: move |_| show_import_bundle_modal.set(false),
+                                    "CLOSE"
+                                }
+                            }
+                        }
+                    } else {
+                        p { class: "wizard-note", "Paste a Loadout Bundle JSON string below to create a new loadout profile matching your local mods." }
+
+                        div { class: "field-group",
+                            textarea {
+                                class: "input textarea mono",
+                                placeholder: "{{\n  \"version\": 1,\n  \"game_id\": \"...\"\n}}",
+                                rows: 8,
+                                value: "{(import_json_input)()}",
+                                oninput: move |e| import_json_input.set(e.value()),
+                            }
+                        }
+
+                        div { class: "modal-actions",
+                            button {
+                                class: "btn",
+                                onclick: move |_| show_import_bundle_modal.set(false),
+                                "CANCEL"
+                            }
+                            button {
+                                class: "btn btn-accent",
+                                disabled: (import_json_input)().trim().is_empty(),
+                                onclick: {
+                                    let store = store.clone();
+                                    let gid = game_id.clone();
+                                    move |_| {
+                                        let core = store.core.clone();
+                                        let gid = gid.clone();
+                                        let json = (import_json_input)().trim().to_string();
+                                        let mut s = store.clone();
+                                        spawn(async move {
+                                            match core.import_profile_bundle(gid, json).await {
+                                                Ok(rep) => {
+                                                    s.toast(ToastKind::Success, format!("Imported profile with {} matched mod(s)", rep.matched_count));
+                                                    import_bundle_report.set(Some(rep));
+                                                }
+                                                Err(e) => s.toast(ToastKind::Error, e),
+                                            }
+                                        });
+                                    }
+                                },
+                                "IMPORT"
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -449,6 +602,15 @@ fn ProfileDetailEditor(
     let mut dxvk_low_latency = use_signal(|| profile.dxvk_low_latency);
     let mut obs_vkcapture = use_signal(|| profile.obs_vkcapture);
     let mut lsfg_vk = use_signal(|| profile.lsfg_vk);
+    let mut enable_sfw = use_signal(|| profile.enable_sfw_toggle);
+    let mut sfw_key = use_signal(|| {
+        profile
+            .sfw_toggle_key
+            .clone()
+            .unwrap_or_else(|| "F9".to_string())
+    });
+    let mut shuffle_launch = use_signal(|| profile.shuffle_on_launch);
+    let mut context_swaps = use_signal(|| profile.enable_context_swaps);
 
     let pid = profile.id.to_string();
 
@@ -504,6 +666,10 @@ fn ProfileDetailEditor(
                             dxvk_low_latency: Some((dxvk_low_latency)()),
                             obs_vkcapture: Some((obs_vkcapture)()),
                             lsfg_vk: Some((lsfg_vk)()),
+                            enable_sfw_toggle: Some((enable_sfw)()),
+                            sfw_toggle_key: Some(Some((sfw_key)().trim().to_string())),
+                            shuffle_on_launch: Some((shuffle_launch)()),
+                            enable_context_swaps: Some((context_swaps)()),
                             ..Default::default()
                         };
 
@@ -695,6 +861,60 @@ fn ProfileDetailEditor(
                             class: if (lsfg_vk)() { "toggle-switch on" } else { "toggle-switch" },
                             onclick: move |_| lsfg_vk.set(!(lsfg_vk)()),
                             div { class: "toggle-knob" }
+                        }
+                    }
+                }
+            }
+
+            div { class: "settings-section",
+                h3 { class: "settings-section-title mono", "WARDROBE & SMART MOD AUTOMATION" }
+
+                div { class: "toggle-grid",
+                    div { class: "toggle-card",
+                        div {
+                            div { class: "setting-label", "In-Game SFW Switch" }
+                            div { class: "setting-desc", "Single-key toggle hiding NSFW skins live in-game" }
+                        }
+                        button {
+                            class: if (enable_sfw)() { "toggle-switch on" } else { "toggle-switch" },
+                            onclick: move |_| enable_sfw.set(!(enable_sfw)()),
+                            div { class: "toggle-knob" }
+                        }
+                    }
+
+                    div { class: "toggle-card",
+                        div {
+                            div { class: "setting-label", "Context-Aware Swaps" }
+                            div { class: "setting-desc", "Land vs Swimming (Aqua) wardrobe pools" }
+                        }
+                        button {
+                            class: if (context_swaps)() { "toggle-switch on" } else { "toggle-switch" },
+                            onclick: move |_| context_swaps.set(!(context_swaps)()),
+                            div { class: "toggle-knob" }
+                        }
+                    }
+
+                    div { class: "toggle-card",
+                        div {
+                            div { class: "setting-label", "Shuffle Skins on Launch" }
+                            div { class: "setting-desc", "Roll 1 random unlocked skin per character on start" }
+                        }
+                        button {
+                            class: if (shuffle_launch)() { "toggle-switch on" } else { "toggle-switch" },
+                            onclick: move |_| shuffle_launch.set(!(shuffle_launch)()),
+                            div { class: "toggle-knob" }
+                        }
+                    }
+                }
+
+                if (enable_sfw)() {
+                    div { class: "field-group", style: "margin-top: 10px; max-width: 240px;",
+                        label { class: "field-label", "SFW Switch Keybind" }
+                        input {
+                            class: "input mono",
+                            placeholder: "F9",
+                            value: "{(sfw_key)()}",
+                            oninput: move |e| sfw_key.set(e.value()),
                         }
                     }
                 }

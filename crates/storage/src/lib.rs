@@ -25,3 +25,10 @@ pub use storage::{Librarian, TemplateRegistry};
 pub use template::GameTemplate;
 pub mod exporter;
 mod snapshots_test;
+pub mod wish;
+
+pub use exporter::{
+    export_clean_mod_zip, export_loadout_bundle, export_profile_for_sharing, parse_loadout_bundle,
+    BundleModEntry, LoadoutBundle,
+};
+pub use wish::extract_gacha_url;

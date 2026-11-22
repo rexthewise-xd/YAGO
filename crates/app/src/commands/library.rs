@@ -115,6 +115,10 @@ pub struct ProfileUpdate {
     pub dxvk_low_latency: Option<bool>,
     pub obs_vkcapture: Option<bool>,
     pub lsfg_vk: Option<bool>,
+    pub enable_sfw_toggle: Option<bool>,
+    pub sfw_toggle_key: Option<Option<String>>,
+    pub shuffle_on_launch: Option<bool>,
+    pub enable_context_swaps: Option<bool>,
 }
 
 pub(crate) fn map_injection(m: storage::InjectionMethod) -> InjectionMethod {
@@ -245,6 +249,8 @@ impl AppCore {
             pre_launch_cmd: template.pre_launch_cmd.clone(),
             post_exit_cmd: template.post_exit_cmd.clone(),
             use_rabbit_wrapper: template.use_rabbit_wrapper.unwrap_or(false),
+            total_playtime_secs: 0,
+            last_played: None,
         };
 
         let mut db = LibraryDatabase::default();
@@ -341,6 +347,23 @@ impl AppCore {
         *self.running_game_name.lock().await = None;
         *self.is_launching.lock().await = false;
         Ok(())
+    }
+
+    pub async fn extract_wish_url(&self, game_id: String) -> Result<String, String> {
+        let dbs = self.game_dbs.lock().await;
+        let db = dbs.get(&game_id).ok_or("Game not found")?;
+        let config = db.games.get(&game_id).ok_or("Game config not found")?;
+
+        let install_path = if config.install_path.exists() {
+            config.install_path.clone()
+        } else if let Some(parent) = config.exe_path.parent() {
+            parent.to_path_buf()
+        } else {
+            config.install_path.clone()
+        };
+        drop(dbs);
+
+        storage::extract_gacha_url(&install_path).map_err(|e| e.to_string())
     }
 
     pub async fn get_library(&self) -> Result<HashMap<String, LibraryDatabase>, String> {
