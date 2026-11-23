@@ -15,13 +15,16 @@ mod themes;
 mod views;
 
 fn main() {
+    let app_data = yago_app::default_app_data_dir();
+    let _log_guard = yago_app::init_logging(&app_data);
+    yago_app::install_panic_hook(app_data.clone());
+
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .expect("tokio runtime");
 
     rt.block_on(async {
-        let app_data = yago_app::default_app_data_dir();
         let webview_dir = app_data.join("webview");
         let _ = std::fs::create_dir_all(&webview_dir);
 

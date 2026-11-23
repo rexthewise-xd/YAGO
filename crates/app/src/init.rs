@@ -6,7 +6,7 @@ use storage::{GlobalSettings, Librarian, SettingsManager, TemplateRegistry};
 use tokio::sync::Mutex;
 
 use crate::config::AppConfig;
-use crate::events::EventBus;
+use crate::events::{AppEvent, EventBus};
 use crate::state::AppCore;
 use crate::ASSETS_DIR;
 
@@ -68,11 +68,13 @@ pub async fn init_with_dir(app_data_dir: PathBuf) -> anyhow::Result<AppCore> {
 
     let settings_path = app_data_dir.join("settings.json");
     let has_settings = settings_path.exists();
-    let settings = if has_settings {
-        let content = std::fs::read_to_string(&settings_path).unwrap_or_default();
-        serde_json::from_str::<GlobalSettings>(&content).unwrap_or_default()
+    let (settings, settings_recovered) = if has_settings {
+        match storage::read_json_with_recovery::<GlobalSettings>(&settings_path) {
+            Ok(rec) => (rec.data, rec.recovered_from_backup),
+            Err(_) => (GlobalSettings::default(), false),
+        }
     } else {
-        GlobalSettings::default()
+        (GlobalSettings::default(), false)
     };
 
     let librarian = Librarian::new(librarian_config(&settings, &app_data_dir));
@@ -172,6 +174,12 @@ pub async fn init_with_dir(app_data_dir: PathBuf) -> anyhow::Result<AppCore> {
 
     let bg = core.clone();
     tokio::spawn(async move {
+        if settings_recovered {
+            bg.emit(AppEvent::Warning(
+                "Restored settings.json from backup (.bak)".to_string(),
+            ));
+        }
+
         let registry = TemplateRegistry::new(bg.librarian.lock().await.templates_root.clone());
         if let Ok(templates) = registry.load_all().await {
             *bg.game_templates.lock().await = templates;
@@ -185,6 +193,34 @@ pub async fn init_with_dir(app_data_dir: PathBuf) -> anyhow::Result<AppCore> {
                     dbs.insert(id, db);
                 }
             }
+        }
+
+        let report = crate::reconcile::reconcile_library(&bg).await;
+        if report.has_issues() {
+            let mut msgs = Vec::new();
+            if !report.reset_downloads.is_empty() {
+                msgs.push(format!(
+                    "Reset {} stuck download(s) to queued",
+                    report.reset_downloads.len()
+                ));
+            }
+            if !report.cleaned_session_locks.is_empty() {
+                msgs.push(format!(
+                    "Cleaned {} dirty session lock(s)",
+                    report.cleaned_session_locks.len()
+                ));
+            }
+            if !report.missing_games.is_empty() {
+                msgs.push(format!(
+                    "{} game executable(s) missing on disk",
+                    report.missing_games.len()
+                ));
+            }
+            if !report.orphaned_mods.is_empty() {
+                let count: usize = report.orphaned_mods.values().map(|v| v.len()).sum();
+                msgs.push(format!("{} orphaned mod(s) detected", count));
+            }
+            bg.emit(AppEvent::Warning(msgs.join(" • ")));
         }
 
         bg.emit_library().await;

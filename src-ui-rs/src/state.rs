@@ -243,6 +243,9 @@ impl Store {
             AppEvent::TaskCompleted(msg) => {
                 self.toast(ToastKind::Success, msg);
             }
+            AppEvent::Warning(msg) => {
+                self.toast(ToastKind::Info, format!("Warning: {msg}"));
+            }
             AppEvent::GameStarted => {
                 self.running.set(true);
                 self.launching.set(false);

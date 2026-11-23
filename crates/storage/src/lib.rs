@@ -1,3 +1,4 @@
+pub mod atomic;
 pub mod catalog;
 pub mod cloud;
 pub mod discovery;
@@ -10,6 +11,8 @@ pub mod scanner;
 pub mod settings;
 pub mod storage;
 pub mod template;
+
+pub use atomic::{read_json_with_recovery, write_json_atomic, RecoveryLoad};
 
 pub use catalog::{CatalogManager, RemoteCatalogEntry};
 pub use discovery::Discovery;

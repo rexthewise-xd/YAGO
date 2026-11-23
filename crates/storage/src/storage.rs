@@ -186,53 +186,8 @@ impl Librarian {
         println!("Librarian: Loading database for {}", game_id);
 
         let mut db = if paths.db.exists() {
-            let content = match fs::read_to_string(&paths.db).await {
-                Ok(c) => c,
-                Err(e) => {
-                    eprintln!(
-                        "Librarian ERROR: Failed to read game.json for {}: {}",
-                        game_id, e
-                    );
-                    // Try backup
-                    let bak_path = paths.db.with_extension("json.bak");
-                    if bak_path.exists() {
-                        println!(
-                            "Librarian: Attempting to recover from backup for {}...",
-                            game_id
-                        );
-                        fs::read_to_string(&bak_path).await?
-                    } else {
-                        return Err(e.into());
-                    }
-                }
-            };
-
-            match serde_json::from_str::<LibraryDatabase>(&content) {
-                Ok(db) => db,
-                Err(e) => {
-                    eprintln!(
-                        "Librarian ERROR: game.json corrupted for {}: {}",
-                        game_id, e
-                    );
-                    // Try backup
-                    let bak_path = paths.db.with_extension("json.bak");
-                    if bak_path.exists() {
-                        println!("Librarian: Recovering from backup due to corruption...");
-                        let bak_content = fs::read_to_string(&bak_path).await?;
-                        serde_json::from_str::<LibraryDatabase>(&bak_content).map_err(|_| {
-                            LibrarianError::Io(std::io::Error::new(
-                                std::io::ErrorKind::InvalidData,
-                                "Both game.json and backup are corrupted".to_string(),
-                            ))
-                        })?
-                    } else {
-                        return Err(LibrarianError::Io(std::io::Error::new(
-                            std::io::ErrorKind::InvalidData,
-                            e.to_string(),
-                        )));
-                    }
-                }
-            }
+            let recovery = crate::atomic::read_json_with_recovery::<LibraryDatabase>(&paths.db)?;
+            recovery.data
         } else {
             LibraryDatabase {
                 version: "1.0".to_string(),
@@ -244,11 +199,11 @@ impl Librarian {
 
         // Load Profiles separately
         if paths.profiles.exists() {
-            let content = fs::read_to_string(&paths.profiles).await?;
-            if let Ok(profiles) =
-                serde_json::from_str::<HashMap<uuid::Uuid, crate::models::Profile>>(&content)
+            if let Ok(recovery) = crate::atomic::read_json_with_recovery::<
+                HashMap<uuid::Uuid, crate::models::Profile>,
+            >(&paths.profiles)
             {
-                db.profiles = profiles;
+                db.profiles = recovery.data;
             } else {
                 eprintln!("Librarian WARNING: Failed to parse profiles.json for {}, resetting to default.", game_id);
                 needs_save = true;
@@ -288,30 +243,13 @@ impl Librarian {
         let mut db_clone = db.clone();
         db_clone.profiles = HashMap::new(); // Don't save profiles in game.json
 
-        let content = serde_json::to_string_pretty(&db_clone)?;
-        Self::write_atomic(&paths.db, content).await?;
+        crate::atomic::write_json_atomic(&paths.db, &db_clone)?;
 
         // 2. Atomic Save for profiles.json
         if !db.profiles.is_empty() {
-            let p_content = serde_json::to_string_pretty(&db.profiles)?;
-            Self::write_atomic(&paths.profiles, p_content).await?;
+            crate::atomic::write_json_atomic(&paths.profiles, &db.profiles)?;
         }
 
-        Ok(())
-    }
-
-    /// Writes content to a file atomically by using a temporary file and renaming it.
-    async fn write_atomic(path: &std::path::Path, content: String) -> Result<()> {
-        let temp_path = path.with_extension("tmp");
-        fs::write(&temp_path, content).await?;
-
-        // If original exists, create a backup first
-        if path.exists() {
-            let bak_path = path.with_extension("json.bak");
-            let _ = fs::copy(path, bak_path).await;
-        }
-
-        fs::rename(&temp_path, path).await?;
         Ok(())
     }
 

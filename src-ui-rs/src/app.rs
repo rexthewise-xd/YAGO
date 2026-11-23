@@ -194,6 +194,7 @@ fn AppShell(core: AppCore) -> Element {
     let mut dismiss_store = store.clone();
     let is_loaded = (store.loaded)();
     let is_setup_pending = (store.setup_done)() == Some(false);
+    let mut crash_log_banner = use_signal(|| core.find_recent_crash());
 
     rsx! {
         document::Stylesheet { href: THEME_CSS }
@@ -219,6 +220,46 @@ fn AppShell(core: AppCore) -> Element {
                     show_command_palette.set(!curr);
                 }
             },
+
+            if let Some(crash_path) = (crash_log_banner)() {
+                div {
+                    style: "background: rgba(239, 68, 68, 0.15); border-bottom: 1px solid rgba(239, 68, 68, 0.4); padding: 6px 16px; display: flex; align-items: center; justify-content: space-between; font-size: 11px; z-index: 100;",
+                    div { style: "display: flex; align-items: center; gap: 8px; color: #fca5a5;",
+                        IconSvg { name: IconName::Warning, size: 14 }
+                        span { class: "mono", "YAGO recovered from an unexpected crash in a previous session." }
+                    }
+                    div { style: "display: flex; gap: 8px; align-items: center;",
+                        button {
+                            class: "btn btn-sm",
+                            onclick: {
+                                let cp = crash_path.clone();
+                                let store = store.clone();
+                                move |_| {
+                                    let core = store.core.clone();
+                                    let p = cp.display().to_string();
+                                    spawn(async move {
+                                        let _ = core.open_path(p).await;
+                                    });
+                                }
+                            },
+                            "VIEW CRASH LOG"
+                        }
+                        button {
+                            class: "btn btn-sm",
+                            onclick: {
+                                let cp = crash_path.clone();
+                                let store = store.clone();
+                                move |_| {
+                                    let core = store.core.clone();
+                                    let _ = core.acknowledge_crash(&cp);
+                                    crash_log_banner.set(None);
+                                }
+                            },
+                            "DISMISS"
+                        }
+                    }
+                }
+            }
 
             TopStrip {}
 

@@ -4,6 +4,7 @@ use storage::models::InstallStatus;
 use crate::art::cover_url;
 use crate::components::{status_dot, status_label, Modal};
 use crate::icons::{IconName, IconSvg};
+use crate::picker::pick_folder;
 use crate::state::{Store, ToastKind};
 use crate::views::GameSettingsDrawer;
 
@@ -75,9 +76,47 @@ pub fn Overview() -> Element {
         .last_played
         .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
         .unwrap_or_else(|| "Never".to_string());
+    let is_exe_missing = status == InstallStatus::Installed && !game.exe_path.exists();
 
     rsx! {
         div { class: "overview",
+            if is_exe_missing {
+                div {
+                    style: "background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.4); border-radius: 4px; padding: 12px 18px; margin: 16px 24px 0; display: flex; align-items: center; justify-content: space-between; gap: 16px;",
+                    div { style: "display: flex; align-items: center; gap: 12px; color: #fca5a5;",
+                        IconSvg { name: IconName::Warning, size: 24 }
+                        div {
+                            div { style: "font-weight: 700; font-size: 13px;", "Game Files Missing" }
+                            div { class: "mono", style: "font-size: 11px; opacity: 0.85; margin-top: 2px;",
+                                "Executable not found at {game.exe_path.display()}. It may have been moved or uninstalled."
+                            }
+                        }
+                    }
+                    button {
+                        class: "btn btn-accent",
+                        onclick: {
+                            let store = store.clone();
+                            let gid = game.id.clone();
+                            move |_| {
+                                let core = store.core.clone();
+                                let gid = gid.clone();
+                                let mut s = store.clone();
+                                spawn(async move {
+                                    if let Some(folder) = pick_folder("Select Game Installation Folder").await {
+                                        match core.relocate_game(gid, folder.display().to_string()).await {
+                                            Ok(_) => s.toast(ToastKind::Success, "Game relocated successfully"),
+                                            Err(e) => s.toast(ToastKind::Error, e),
+                                        }
+                                    }
+                                });
+                            }
+                        },
+                        IconSvg { name: IconName::Folder, size: 14 }
+                        "RELOCATE FOLDER"
+                    }
+                }
+            }
+
             div { class: "hero",
                 img { class: "hero-art", src: "{cover}", alt: "" }
                 div { class: "hero-shade" }

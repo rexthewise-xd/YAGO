@@ -1,7 +1,6 @@
 use crate::error::Result;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use tokio::fs;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GlobalSettings {
@@ -61,14 +60,11 @@ impl SettingsManager {
             return Ok(default);
         }
 
-        let content = fs::read_to_string(&self.config_path).await?;
-        let settings: GlobalSettings = serde_json::from_str(&content).unwrap_or_default();
-        Ok(settings)
+        let recovery = crate::atomic::read_json_with_recovery::<GlobalSettings>(&self.config_path)?;
+        Ok(recovery.data)
     }
 
     pub async fn save(&self, settings: &GlobalSettings) -> Result<()> {
-        let content = serde_json::to_string_pretty(settings)?;
-        fs::write(&self.config_path, content).await?;
-        Ok(())
+        crate::atomic::write_json_atomic(&self.config_path, settings)
     }
 }

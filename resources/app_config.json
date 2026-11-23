@@ -1,7 +1,7 @@
 {
   "common_loader_repo": "SpectrumQT/XXMI-Libs-Package",
   "proton_repo": "GloriousEggroll/proton-ge-custom",
-  "yago_update_url": "https://api.github.com/repos/rexthewise-xd/yago/releases/latest",
+  "yago_update_url": "https://api.github.com/repos/rexthewise-xd/YAGO/releases/latest",
   "reshade_url": "https://reshade.me/downloads/ReShade_Setup_6.6.2.exe",
   "default_cover_image": "https://picsum.photos/seed/yago/1920/1080",
   "default_icon_image": "https://picsum.photos/seed/yago-icon/200/200",
@@ -14,5 +14,6 @@
     "https://picsum.photos/seed/zenless-landscape/1920/1080",
     "https://picsum.photos/seed/wuwa-landscape/1920/1080",
     "https://picsum.photos/seed/fantasy-landscape/1920/1080"
-  ]
+  ],
+  "theme": "linear"
 }

@@ -15,6 +15,7 @@ pub enum AppEvent {
     DownloadError(String),
     DownloadComplete(String),
     TaskCompleted(String),
+    Warning(String),
     GameStarted,
     GameStopped,
     SettingsUpdated(GlobalSettings),

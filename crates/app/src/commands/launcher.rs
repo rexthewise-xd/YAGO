@@ -137,6 +137,9 @@ impl AppCore {
         let mut profiles_for_weaver = Vec::new();
         let mut add_to_list = |mod_id: &Uuid| {
             if let Some(record) = db.mods.get(mod_id) {
+                if !record.path.exists() {
+                    return;
+                }
                 let mut ini_paths = Vec::new();
                 for entry in walkdir::WalkDir::new(&record.path)
                     .max_depth(3)
@@ -491,6 +494,20 @@ impl AppCore {
             *launching = true;
         }
         let res = async {
+            let preflight = self.preflight_launch(game_id.clone()).await?;
+            let blockers: Vec<_> = preflight
+                .iter()
+                .filter(|i| i.severity == "Blocker")
+                .collect();
+            if !blockers.is_empty() {
+                let msg = blockers
+                    .iter()
+                    .map(|b| format!("{}: {}", b.title, b.detail))
+                    .collect::<Vec<_>>()
+                    .join(" | ");
+                return Err(format!("Launch aborted by preflight check: {}", msg));
+            }
+
             let (
                 exe_path,
                 exe_name,
@@ -663,7 +680,10 @@ impl AppCore {
             }
             let loaders_root = base_storage.join("loaders");
             let config_use_rabbit = config_use_rabbit_wrapper;
+            let lock_path = game_dir.join(".yago_session_lock");
+
             if method == launcher::InjectionMethod::Proxy {
+                let _ = std::fs::write(&lock_path, "active_proxy_session");
                 LoaderContext::install_loader(
                     &game_dir,
                     &loaders_root,
@@ -678,6 +698,7 @@ impl AppCore {
                 .await
                 .map_err(|e| e.to_string())?;
             } else if method == launcher::InjectionMethod::None && profile.use_reshade {
+                let _ = std::fs::write(&lock_path, "active_proxy_session");
                 LoaderContext::install_loader(
                     &game_dir,
                     &loaders_root,
@@ -736,6 +757,7 @@ impl AppCore {
                                 config_unsafe_mode,
                             )
                             .await;
+                            let _ = std::fs::remove_file(game_dir.join(".yago_session_lock"));
                         }
                         *core.running_game_name.lock().await = None;
                         core.emit(AppEvent::GameStopped);
@@ -804,4 +826,138 @@ impl AppCore {
         let log_path = install_path.join("d3d11_log.txt");
         mod_patches::parse_d3d11_log(&log_path, 500).map_err(|e| e.to_string())
     }
+
+    pub async fn preflight_launch(&self, game_id: String) -> Result<Vec<PreflightIssue>, String> {
+        let mut issues = Vec::new();
+        let dbs = self.game_dbs.lock().await;
+        let db = dbs.get(&game_id).ok_or("Game not found")?;
+        let config = db.games.get(&game_id).ok_or("Game config missing")?;
+        let p_uuid = Uuid::parse_str(&config.active_profile_id).map_err(|e| e.to_string())?;
+        let profile = db.profiles.get(&p_uuid).ok_or("Profile missing")?;
+        let settings = self.global_settings.lock().await.clone();
+
+        // 1. Blocker: Game executable missing on disk
+        if !config.exe_path.exists() {
+            issues.push(PreflightIssue {
+                severity: "Blocker".to_string(),
+                title: "Game Executable Missing".to_string(),
+                detail: format!("Executable file not found at {:?}", config.exe_path),
+            });
+        }
+
+        // 2. Blocker: Game process already running
+        if launcher::Monitor::is_running(&config.exe_name) {
+            issues.push(PreflightIssue {
+                severity: "Blocker".to_string(),
+                title: "Game Already Running".to_string(),
+                detail: format!("Process '{}' is already running", config.exe_name),
+            });
+        }
+
+        // 3. Blocker (Linux only): runner binary missing (when not Native and not wine in PATH)
+        #[cfg(target_os = "linux")]
+        if config.start_method != storage::models::StartMethod::Native {
+            let rid_opt = config
+                .active_runner_id
+                .as_ref()
+                .filter(|s| !s.is_empty())
+                .or(settings
+                    .default_runner_id
+                    .as_ref()
+                    .filter(|s| !s.is_empty()))
+                .cloned();
+
+            let (runner_path, runner_type) =
+                resolve_runner_path(rid_opt, &self.app_data_dir, &settings).await;
+            if runner_type == launcher::RunnerType::Wine && runner_path == PathBuf::from("wine") {
+                if !is_command_in_path("wine") {
+                    issues.push(PreflightIssue {
+                        severity: "Blocker".to_string(),
+                        title: "Wine Not Found".to_string(),
+                        detail: "The 'wine' executable was not found in system PATH and no Proton runner is configured.".to_string(),
+                    });
+                }
+            } else if !runner_path.exists() {
+                issues.push(PreflightIssue {
+                    severity: "Blocker".to_string(),
+                    title: "Runner Executable Missing".to_string(),
+                    detail: format!("Selected runner binary not found at {:?}", runner_path),
+                });
+            }
+        }
+
+        // 4. Blocker: Modloader enabled + Proxy mode + game_dir is not writable
+        let game_dir = if config.install_path.exists() {
+            config.install_path.clone()
+        } else if let Some(parent) = config.exe_path.parent() {
+            parent.to_path_buf()
+        } else {
+            config.install_path.clone()
+        };
+
+        if config.modloader_enabled
+            && config.injection_method == storage::models::InjectionMethod::Proxy
+        {
+            if !is_dir_writable(&game_dir) {
+                issues.push(PreflightIssue {
+                    severity: "Blocker".to_string(),
+                    title: "Game Directory Not Writable".to_string(),
+                    detail: format!(
+                        "Cannot write proxy DLLs to {:?}. Please check directory permissions.",
+                        game_dir
+                    ),
+                });
+            }
+        }
+
+        // 5. Warning: Active profile contains orphaned mods whose folders are missing on disk
+        for mid in &profile.enabled_mod_ids {
+            if let Some(record) = db.mods.get(mid) {
+                if !record.path.exists() {
+                    issues.push(PreflightIssue {
+                        severity: "Warning".to_string(),
+                        title: "Orphaned Mod Folder".to_string(),
+                        detail: format!(
+                            "Mod '{}' folder {:?} does not exist and will be skipped.",
+                            record.meta.name, record.path
+                        ),
+                    });
+                }
+            }
+        }
+
+        Ok(issues)
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct PreflightIssue {
+    pub severity: String, // "Blocker" | "Warning"
+    pub title: String,
+    pub detail: String,
+}
+
+fn is_dir_writable(dir: &Path) -> bool {
+    if !dir.exists() {
+        return false;
+    }
+    let test_file = dir.join(".yago_write_test");
+    if std::fs::File::create(&test_file).is_ok() {
+        let _ = std::fs::remove_file(test_file);
+        true
+    } else {
+        false
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn is_command_in_path(cmd: &str) -> bool {
+    if let Ok(path_var) = std::env::var("PATH") {
+        for dir in std::env::split_paths(&path_var) {
+            if dir.join(cmd).is_file() {
+                return true;
+            }
+        }
+    }
+    false
 }

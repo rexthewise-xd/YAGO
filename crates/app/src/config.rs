@@ -11,15 +11,18 @@ pub struct AppConfig {
     pub community_backgrounds_base_url: String,
     pub preset_covers: Vec<String>,
     pub yago_update_url: String,
+    #[serde(default = "default_theme")]
     pub theme: String,
+}
+
+fn default_theme() -> String {
+    "linear".to_string()
 }
 
 impl AppConfig {
     pub fn load(path: std::path::PathBuf) -> Self {
-        if let Ok(content) = std::fs::read_to_string(path) {
-            if let Ok(config) = serde_json::from_str(&content) {
-                return config;
-            }
+        if let Ok(recovery) = storage::read_json_with_recovery::<AppConfig>(&path) {
+            return recovery.data;
         }
         Self::default()
     }
@@ -44,7 +47,7 @@ impl Default for AppConfig {
                 "https://picsum.photos/seed/wuwa-landscape/1920/1080".to_string(),
                 "https://picsum.photos/seed/fantasy-landscape/1920/1080".to_string(),
             ],
-            yago_update_url: "https://api.github.com/repos/rexthewise-xd/yago/releases/latest".to_string(),
+            yago_update_url: "https://api.github.com/repos/rexthewise-xd/YAGO/releases/latest".to_string(),
             theme: "linear".to_string(),
         }
     }

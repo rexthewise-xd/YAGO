@@ -7,9 +7,14 @@ pub struct ReleaseAsset {
     pub browser_download_url: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct GithubRelease {
     pub tag_name: String,
+    #[serde(default)]
+    pub html_url: Option<String>,
+    #[serde(default)]
+    pub body: Option<String>,
+    #[serde(default)]
     pub assets: Vec<ReleaseAsset>,
 }
 

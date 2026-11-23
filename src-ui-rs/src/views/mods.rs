@@ -103,6 +103,7 @@ pub fn ModsView() -> Element {
     }
 
     let mod_count = list.len();
+    let orphaned_count = list.iter().filter(|(m, _)| !m.path.exists()).count();
     let reorder_enabled = !by_name;
     let staging_snapshot = (staging)();
     let delete_snapshot = (confirm_delete)();
@@ -227,6 +228,29 @@ pub fn ModsView() -> Element {
                             placeholder: "Search mods...",
                             value: "{(search)()}",
                             oninput: move |evt| search.set(evt.value()),
+                        }
+                    }
+                    if orphaned_count > 0 {
+                        button {
+                            class: "btn btn-danger",
+                            title: "Remove missing mod records from database",
+                            onclick: {
+                                let store = store.clone();
+                                let gid = game_id.clone();
+                                move |_| {
+                                    let core = store.core.clone();
+                                    let gid = gid.clone();
+                                    let mut s = store.clone();
+                                    spawn(async move {
+                                        match core.prune_orphaned_mods(gid).await {
+                                            Ok(count) => s.toast(ToastKind::Success, format!("Pruned {count} orphaned mod(s)")),
+                                            Err(e) => s.toast(ToastKind::Error, e),
+                                        }
+                                    });
+                                }
+                            },
+                            IconSvg { name: IconName::Trash, size: 14 }
+                            "PRUNE MISSING MODS ({orphaned_count})"
                         }
                     }
                     button {
@@ -696,6 +720,9 @@ fn ModRow(
                     if has_update {
                         span { class: "update-badge", "UPDATE AVAILABLE" }
                     }
+                    if !mod_record.path.exists() {
+                        span { class: "tag tag-danger mono", style: "font-size: 9px;", "ORPHANED (MISSING ON DISK)" }
+                    }
                 }
             }
 
@@ -800,6 +827,13 @@ fn GridModCard(
                         style: "position: absolute; top: 6px; left: 6px; z-index: 5;",
                         class: "update-badge",
                         "UPDATE"
+                    }
+                }
+                if !mod_record.path.exists() {
+                    span {
+                        style: "position: absolute; bottom: 6px; left: 6px; z-index: 5;",
+                        class: "tag tag-danger mono",
+                        "ORPHANED"
                     }
                 }
                 button {

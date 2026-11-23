@@ -58,6 +58,8 @@ fn GeneralTab() -> Element {
     let settings = (store.settings)();
     let app_config = (store.app_config)();
     let current_theme = app_config.theme.clone();
+    let mut update_status = use_signal(|| None::<yago_app::AppUpdateInfo>);
+    let mut checking_update = use_signal(|| false);
 
     rsx! {
         div { class: "settings-section",
@@ -206,6 +208,112 @@ fn GeneralTab() -> Element {
                                         IconSvg { name: IconName::Check, size: 14 }
                                     }
                                 }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        div { class: "settings-section",
+            h3 { class: "settings-section-title mono", "APPLICATION & UPDATES" }
+
+            div { class: "setting-row",
+                div { class: "setting-row-left",
+                    div { class: "setting-icon",
+                        IconSvg { name: IconName::Info, size: 18 }
+                    }
+                    div {
+                        div { class: "setting-label", "YAGO Version" }
+                        div { class: "setting-desc mono", "v{env!(\"CARGO_PKG_VERSION\")}" }
+                    }
+                }
+                div { style: "display: flex; gap: 8px; align-items: center;",
+                    button {
+                        class: "btn btn-sm",
+                        disabled: (checking_update)(),
+                        onclick: {
+                            let store = store.clone();
+                            move |_| {
+                                let core = store.core.clone();
+                                let mut s = store.clone();
+                                spawn(async move {
+                                    checking_update.set(true);
+                                    match core.check_app_update().await {
+                                        Ok(info) => {
+                                            if info.has_update {
+                                                s.toast(ToastKind::Success, format!("Update available: v{}", info.latest_version));
+                                            } else {
+                                                s.toast(ToastKind::Info, "YAGO is up-to-date");
+                                            }
+                                            update_status.set(Some(info));
+                                        }
+                                        Err(e) => s.toast(ToastKind::Error, format!("Update check failed: {e}")),
+                                    }
+                                    checking_update.set(false);
+                                });
+                            }
+                        },
+                        IconSvg { name: IconName::Download, size: 14 }
+                        if (checking_update)() { "CHECKING…" } else { "CHECK FOR UPDATES" }
+                    }
+                    button {
+                        class: "btn btn-sm",
+                        onclick: {
+                            let store = store.clone();
+                            move |_| {
+                                let core = store.core.clone();
+                                let logs_dir = core.app_data_dir.join("logs").display().to_string();
+                                let s = store.clone();
+                                s.call(
+                                    async move { core.open_path(logs_dir).await },
+                                    |_, _| {},
+                                );
+                            }
+                        },
+                        IconSvg { name: IconName::Folder, size: 14 }
+                        "OPEN LOGS FOLDER"
+                    }
+                }
+            }
+
+            if let Some(info) = (update_status)() {
+                div {
+                    style: "margin-top: 8px; padding: 12px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px; display: flex; flex-direction: column; gap: 6px;",
+                    div { style: "display: flex; align-items: center; justify-content: space-between;",
+                        span { class: "mono", style: "font-weight: 600; font-size: 12px; color: var(--accent);",
+                            if info.has_update {
+                                "{info.latest_version} (Update Available)"
+                            } else {
+                                "YAGO is up-to-date"
+                            }
+                        }
+                        if let Some(url) = &info.release_url {
+                            if info.has_update {
+                                button {
+                                    class: "btn btn-sm btn-accent",
+                                    onclick: {
+                                        let u = url.clone();
+                                        let store = store.clone();
+                                        move |_| {
+                                            let core = store.core.clone();
+                                            let url_str = u.clone();
+                                            spawn(async move {
+                                                let _ = core.open_path(url_str).await;
+                                            });
+                                        }
+                                    },
+                                    "VIEW ON GITHUB"
+                                }
+                            }
+                        }
+                    }
+                    if let Some(notes) = &info.notes {
+                        if !notes.trim().is_empty() {
+                            div {
+                                class: "mono",
+                                style: "font-size: 11px; color: var(--text-sec); max-height: 120px; overflow-y: auto; white-space: pre-wrap;",
+                                "{notes}"
                             }
                         }
                     }
