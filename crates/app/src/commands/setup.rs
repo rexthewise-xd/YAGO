@@ -24,15 +24,6 @@ impl AppCore {
 
         let _ = self.pick_default_runner().await;
 
-        let base_storage = self.base_storage().await;
-        let common_loaders = base_storage.join("loaders").join("common");
-        if !common_loaders.exists()
-            || !common_loaders.join("d3d11.dll").exists()
-            || !common_loaders.join("ReShade.dll").exists()
-        {
-            return Ok(false);
-        }
-
         Ok(true)
     }
 

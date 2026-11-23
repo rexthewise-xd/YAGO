@@ -192,4 +192,25 @@ mod tests {
         core.remove_game(game_id.clone()).await.unwrap();
         assert!(!core.get_library().await.unwrap().contains_key(&game_id));
     }
+
+    #[tokio::test]
+    async fn test_fresh_device_setup_lifecycle() {
+        let dir = tempdir().unwrap();
+        let app_data_dir = dir.path().to_path_buf();
+
+        // 1. Boot init_with_dir on a completely empty directory
+        let core = init_with_dir(app_data_dir.clone()).await.unwrap();
+
+        // 2. Assert core.check_setup().await.unwrap() == false
+        assert_eq!(core.check_setup().await.unwrap(), false);
+
+        // 3. Call core.update_settings(GlobalSettings::default()).await.unwrap()
+        core.update_settings(storage::GlobalSettings::default())
+            .await
+            .unwrap();
+
+        // 4. Assert core.check_setup().await.unwrap() == true and settings.json exists inside data dir
+        assert_eq!(core.check_setup().await.unwrap(), true);
+        assert!(app_data_dir.join("settings.json").exists());
+    }
 }

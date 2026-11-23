@@ -67,7 +67,8 @@ pub async fn init_with_dir(app_data_dir: PathBuf) -> anyhow::Result<AppCore> {
     let settings_manager = Arc::new(SettingsManager::new(app_data_dir.clone()));
 
     let settings_path = app_data_dir.join("settings.json");
-    let settings = if settings_path.exists() {
+    let has_settings = settings_path.exists();
+    let settings = if has_settings {
         let content = std::fs::read_to_string(&settings_path).unwrap_or_default();
         serde_json::from_str::<GlobalSettings>(&content).unwrap_or_default()
     } else {
@@ -75,7 +76,12 @@ pub async fn init_with_dir(app_data_dir: PathBuf) -> anyhow::Result<AppCore> {
     };
 
     let librarian = Librarian::new(librarian_config(&settings, &app_data_dir));
-    librarian.ensure_core_dirs()?;
+    if has_settings {
+        librarian.ensure_core_dirs()?;
+    } else {
+        std::fs::create_dir_all(&librarian.assets_root)?;
+        std::fs::create_dir_all(&librarian.templates_root)?;
+    }
 
     let config_path = app_data_dir.join("app_config.json");
     if !config_path.exists() {

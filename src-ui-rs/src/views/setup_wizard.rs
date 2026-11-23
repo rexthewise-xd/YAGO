@@ -27,7 +27,12 @@ pub fn SetupWizard() -> Element {
     let runners_path = use_signal(|| settings.runners_path.to_string_lossy().to_string());
     let prefixes_path = use_signal(|| settings.prefixes_path.to_string_lossy().to_string());
     let cache_path = use_signal(|| settings.cache_path.to_string_lossy().to_string());
-    let mut proton_path = use_signal(|| settings.steam_compat_tools_path.to_string_lossy().to_string());
+    let mut proton_path = use_signal(|| {
+        settings
+            .steam_compat_tools_path
+            .to_string_lossy()
+            .to_string()
+    });
 
     let mut status = use_signal(|| Option::<SetupStatus>::None);
     let mut discovered = use_signal(Vec::<IdentifiedGame>::new);
@@ -37,7 +42,7 @@ pub fn SetupWizard() -> Element {
 
     {
         let core = store.core.clone();
-        use_resource(move || {
+        use_future(move || {
             let core = core.clone();
             async move {
                 if let Ok(s) = core.get_setup_status().await {
@@ -77,7 +82,10 @@ pub fn SetupWizard() -> Element {
         spawn(async move {
             match core.detect_steam_proton_path().await {
                 Ok(Some(p)) => proton_path.set(p),
-                Ok(None) => s.toast(ToastKind::Info, "No Steam Proton directories found. Select manually."),
+                Ok(None) => s.toast(
+                    ToastKind::Info,
+                    "No Steam Proton directories found. Select manually.",
+                ),
                 Err(e) => s.toast(ToastKind::Error, e),
             }
         });
@@ -133,14 +141,33 @@ pub fn SetupWizard() -> Element {
             settings.prefixes_path = (prefixes_path)().into();
             settings.cache_path = (cache_path)().into();
             let saved = core.update_settings(settings).await;
-            let done = core.check_setup().await.unwrap_or(false);
             busy.set(false);
-            if saved.is_err() || !done {
-                s.toast(ToastKind::Error, "Setup incomplete — ensure all components are downloaded.");
+            if let Err(e) = saved {
+                s.toast(ToastKind::Error, format!("Failed to save settings: {e}"));
             } else {
                 s.setup_done.set(Some(true));
-                s.toast(ToastKind::Success, "YAGO initialized. Welcome to the library.");
+                s.refresh().await;
+                s.toast(
+                    ToastKind::Success,
+                    "YAGO initialized. Welcome to the library.",
+                );
             }
+        });
+    };
+
+    let skip_store = store.clone();
+    let skip_wizard = move |_| {
+        let mut s = skip_store.clone();
+        let core = s.core.clone();
+        spawn(async move {
+            let settings = (s.settings)();
+            let _ = core.update_settings(settings).await;
+            s.setup_done.set(Some(true));
+            s.refresh().await;
+            s.toast(
+                ToastKind::Success,
+                "Default settings applied. Welcome to YAGO.",
+            );
         });
     };
 
@@ -180,6 +207,11 @@ pub fn SetupWizard() -> Element {
                         }
                         PathField { label: "STORAGE HOME", value: storage_path, placeholder: "Default (App Data)" }
                         div { class: "modal-actions",
+                            button {
+                                class: "btn",
+                                onclick: skip_wizard,
+                                "SKIP TO LIBRARY"
+                            }
                             button {
                                 class: "btn btn-accent",
                                 onclick: move |_| { apply_paths(&mut save_store0); step.set(1); },
@@ -432,11 +464,12 @@ pub fn SetupWizard() -> Element {
                                     "FINALIZE"
                                     IconSvg { name: IconName::ChevronRight, size: 14 }
                                 }
-                            } else if dl_err.is_some() {
+                            } else {
                                 button {
                                     class: "btn",
                                     onclick: move |_| step.set(6),
-                                    "SKIP"
+                                    "SKIP FOR NOW"
+                                    IconSvg { name: IconName::ChevronRight, size: 14 }
                                 }
                             }
                         }
@@ -446,14 +479,14 @@ pub fn SetupWizard() -> Element {
                         div { class: "wizard-confirm",
                             IconSvg { name: IconName::Check, size: 44 }
                             h3 { "INITIALIZATION COMPLETE" }
-                            p { class: "wizard-note", "YAGO is ready. Your library and tools are synced." }
+                            p { class: "wizard-note", "YAGO is ready. Your library and settings are saved." }
                         }
                         div { class: "modal-actions",
                             button {
                                 class: "btn btn-accent",
                                 disabled: is_busy,
                                 onclick: finish,
-                                if is_busy { "SYNCING STATE…" } else { "ENTER LIBRARY" }
+                                if is_busy { "SAVING SETTINGS…" } else { "FINISH SETUP & ENTER LIBRARY" }
                             }
                         }
                     }
@@ -513,7 +546,10 @@ fn run_scan(
             let found = core.recursive_scan_path(root).await?;
             let mut out = Vec::new();
             for d in found {
-                if let Ok(g) = core.identify_game(d.path.to_string_lossy().to_string()).await {
+                if let Ok(g) = core
+                    .identify_game(d.path.to_string_lossy().to_string())
+                    .await
+                {
                     if !out.iter().any(|e: &IdentifiedGame| e.id == g.id) {
                         out.push(g);
                     }

@@ -148,7 +148,11 @@ impl Store {
     pub fn task_finish(&mut self, id: u64, ok: bool, detail: impl Into<String>) {
         let mut tasks = self.tasks.write();
         if let Some(t) = tasks.iter_mut().find(|t| t.id == id) {
-            t.state = if ok { TaskState::Done } else { TaskState::Failed };
+            t.state = if ok {
+                TaskState::Done
+            } else {
+                TaskState::Failed
+            };
             t.detail = detail.into();
         }
     }
@@ -195,9 +199,7 @@ impl Store {
         ids.sort_by(|a, b| {
             let ga = self.game(a);
             let gb = self.game(b);
-            ga.map(|g| g.name)
-                .cmp(&gb.map(|g| g.name))
-                .then(a.cmp(b))
+            ga.map(|g| g.name).cmp(&gb.map(|g| g.name)).then(a.cmp(b))
         });
         ids
     }
@@ -287,8 +289,9 @@ impl Store {
         if let Ok(c) = core.get_app_config().await {
             self.app_config.set(c);
         }
-        if let Ok(done) = core.check_setup().await {
-            self.setup_done.set(Some(done));
+        match core.check_setup().await {
+            Ok(done) => self.setup_done.set(Some(done)),
+            Err(_) => self.setup_done.set(Some(false)),
         }
         if (self.selected)().is_none() {
             let first = self.game_ids().first().cloned();

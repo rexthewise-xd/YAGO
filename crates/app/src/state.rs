@@ -23,6 +23,12 @@ pub struct AppCore {
     pub events: EventBus,
 }
 
+impl PartialEq for AppCore {
+    fn eq(&self, other: &Self) -> bool {
+        self.app_data_dir == other.app_data_dir
+    }
+}
+
 impl AppCore {
     pub fn emit(&self, event: AppEvent) {
         self.events.emit(event);
