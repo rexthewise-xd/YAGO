@@ -25,6 +25,7 @@ pub async fn get_latest_release(owner: &str, repo: &str) -> Result<GithubRelease
     );
     let client = reqwest::Client::builder()
         .user_agent("YAGO-Quartermaster")
+        .connect_timeout(std::time::Duration::from_secs(15))
         .timeout(std::time::Duration::from_secs(30))
         .build()?;
 

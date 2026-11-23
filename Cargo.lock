@@ -7928,6 +7928,7 @@ dependencies = [
  "loader",
  "log",
  "mod_patches",
+ "regex",
  "reqwest 0.12.28",
  "resources",
  "serde",
@@ -7944,6 +7945,7 @@ dependencies = [
  "uuid",
  "vfs",
  "walkdir",
+ "zip",
 ]
 
 [[package]]

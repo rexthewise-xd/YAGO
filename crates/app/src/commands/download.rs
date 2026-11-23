@@ -173,6 +173,34 @@ impl AppCore {
         }
     }
 
+    pub async fn cancel_game_download(&self, game_id: String) -> Result<(), String> {
+        let mut controls = self.download_controls.lock().await;
+        if let Some(tx) = controls.remove(&game_id) {
+            let _ = tx.send(true);
+        }
+        drop(controls);
+        self.update_game_status(&game_id, InstallStatus::Queued, None)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn cancel_all_tasks(&self) -> Result<(), String> {
+        let mut controls = self.download_controls.lock().await;
+        let game_ids: Vec<String> = controls.keys().cloned().collect();
+        for tx in controls.values() {
+            let _ = tx.send(true);
+        }
+        controls.clear();
+        drop(controls);
+
+        for gid in game_ids {
+            let _ = self
+                .update_game_status(&gid, InstallStatus::Queued, None)
+                .await;
+        }
+        Ok(())
+    }
+
     pub async fn resume_game_download(&self, game_id: String) -> Result<(), String> {
         let controls = self.download_controls.lock().await;
         if let Some(tx) = controls.get(&game_id) {

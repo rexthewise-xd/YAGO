@@ -42,20 +42,37 @@ pub fn App() -> Element {
                         style: "width: 100%; max-height: 160px; overflow-y: auto; background: #0b0e14; border: 1px solid #2a3242; border-radius: 4px; padding: 12px; font-family: monospace; font-size: 11px; color: #fca5a5; text-align: left; word-break: break-all;",
                         "{err}"
                     }
-                    button {
-                        class: "btn btn-accent",
-                        style: "margin-top: 8px;",
-                        disabled: (retrying)(),
-                        onclick: move |_| {
-                            retrying.set(true);
-                            spawn(async move {
-                                let res = yago_app::init().await.map_err(|e| e.to_string());
-                                init_state.set(res);
-                                retrying.set(false);
-                            });
-                        },
-                        IconSvg { name: IconName::Refresh, size: 14 }
-                        if (retrying)() { "RETRYING…" } else { "RETRY STARTUP" }
+                    div { style: "display: flex; gap: 10px; align-items: center; margin-top: 8px;",
+                        button {
+                            class: "btn btn-accent",
+                            disabled: (retrying)(),
+                            onclick: move |_| {
+                                retrying.set(true);
+                                spawn(async move {
+                                    let res = yago_app::init().await.map_err(|e| e.to_string());
+                                    init_state.set(res);
+                                    retrying.set(false);
+                                });
+                            },
+                            IconSvg { name: IconName::Refresh, size: 14 }
+                            if (retrying)() { "RETRYING…" } else { "RETRY STARTUP" }
+                        }
+                        button {
+                            class: "btn",
+                            onclick: move |_| {
+                                #[cfg(target_os = "linux")]
+                                let opener = "xdg-open";
+                                #[cfg(target_os = "windows")]
+                                let opener = "explorer";
+                                #[cfg(target_os = "macos")]
+                                let opener = "open";
+                                let _ = std::process::Command::new(opener)
+                                    .arg("https://github.com/rexthewise-xd/YAGO/issues/new")
+                                    .spawn();
+                            },
+                            IconSvg { name: IconName::Launch, size: 14 }
+                            "REPORT ON GITHUB"
+                        }
                     }
                 }
             }
@@ -127,37 +144,41 @@ fn AppShell(core: AppCore) -> Element {
         });
     }
 
-    // 1-Click install deep link handler
+    // 1-Click install deep link handler (handles initial CLI args and live forwarded links)
     {
         let store = store.clone();
+        let deep_link_ctx = try_consume_context::<crate::DeepLinkReceiver>();
         use_future(move || {
             let mut store = store.clone();
+            let deep_link_ctx = deep_link_ctx.clone();
             async move {
-                let deep_link = std::env::args().find(|a| a.starts_with("yago://"));
-                if let Some(uri) = deep_link {
-                    let mut attempts = 0;
-                    while store.selected_game().is_none() && attempts < 30 {
-                        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-                        attempts += 1;
-                    }
-                    if let Some(game) = store.selected_game() {
-                        let core = store.core.clone();
-                        store.toast(
-                            crate::state::ToastKind::Info,
-                            "Processing 1-Click mod install deep link...",
-                        );
-                        match core.handle_deep_link(game.id.clone(), uri).await {
-                            Ok(rec) => {
-                                store.toast(
-                                    crate::state::ToastKind::Success,
-                                    format!("Installed {} via 1-Click", rec.meta.name),
-                                );
-                            }
-                            Err(e) => {
-                                store.toast(
-                                    crate::state::ToastKind::Error,
-                                    format!("1-Click install failed: {e}"),
-                                );
+                if let Some(ch) = deep_link_ctx {
+                    let mut rx = ch.lock().await;
+                    while let Some(uri) = rx.recv().await {
+                        let mut attempts = 0;
+                        while store.selected_game().is_none() && attempts < 30 {
+                            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                            attempts += 1;
+                        }
+                        if let Some(game) = store.selected_game() {
+                            let core = store.core.clone();
+                            store.toast(
+                                crate::state::ToastKind::Info,
+                                "Processing 1-Click mod install deep link...",
+                            );
+                            match core.handle_deep_link(game.id.clone(), uri).await {
+                                Ok(rec) => {
+                                    store.toast(
+                                        crate::state::ToastKind::Success,
+                                        format!("Installed {} via 1-Click", rec.meta.name),
+                                    );
+                                }
+                                Err(e) => {
+                                    store.toast(
+                                        crate::state::ToastKind::Error,
+                                        format!("1-Click install failed: {e}"),
+                                    );
+                                }
                             }
                         }
                     }
@@ -243,6 +264,41 @@ fn AppShell(core: AppCore) -> Element {
                                 }
                             },
                             "VIEW CRASH LOG"
+                        }
+                        button {
+                            class: "btn btn-sm btn-accent",
+                            onclick: {
+                                let store = store.clone();
+                                move |_| {
+                                    let core = store.core.clone();
+                                    let mut s = store.clone();
+                                    spawn(async move {
+                                        match core.export_bug_report(None).await {
+                                            Ok(zip_path) => {
+                                                s.toast(crate::state::ToastKind::Success, format!("Bug report created: {zip_path}"));
+                                                let _ = core.open_path(zip_path).await;
+                                            }
+                                            Err(e) => s.toast(crate::state::ToastKind::Error, format!("Failed to create bug report: {e}")),
+                                        }
+                                    });
+                                }
+                            },
+                            IconSvg { name: IconName::Download, size: 13 }
+                            "CREATE BUG REPORT"
+                        }
+                        button {
+                            class: "btn btn-sm",
+                            onclick: {
+                                let store = store.clone();
+                                move |_| {
+                                    let core = store.core.clone();
+                                    spawn(async move {
+                                        let _ = core.open_path("https://github.com/rexthewise-xd/YAGO/issues/new".to_string()).await;
+                                    });
+                                }
+                            },
+                            IconSvg { name: IconName::Launch, size: 13 }
+                            "REPORT ON GITHUB"
                         }
                         button {
                             class: "btn btn-sm",

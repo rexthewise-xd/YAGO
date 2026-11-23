@@ -1,8 +1,10 @@
 pub mod assets;
 pub mod commands;
 pub mod config;
+pub mod diagnostics_bundle;
 pub mod events;
 pub mod init;
+pub mod instance;
 pub mod logging;
 pub mod reconcile;
 pub mod safety;
@@ -12,8 +14,10 @@ pub mod state;
 mod init_tests;
 
 pub use config::AppConfig;
+pub use diagnostics_bundle::{create_bug_report_bundle, redact_text, SystemInfoReport};
 pub use events::{AppEvent, EventBus};
 pub use init::{default_app_data_dir, init, init_with_dir};
+pub use instance::{acquire_or_forward, InstanceGuard, InstanceResult};
 pub use logging::{
     acknowledge_crash_log, find_recent_crash_log, init_logging, install_panic_hook, WorkerGuard,
 };

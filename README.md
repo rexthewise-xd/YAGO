@@ -45,6 +45,14 @@ A high-performance, cross-platform game mod manager and launcher built with Diox
 - **Embedded WebGL 3D Mesh Previewer**: Pure offline WebGL canvas inside Mod Inspector parsing `.buf` / `.ib` geometry with orbit rotation, zoom, wireframe toggle, and vertex/triangle metrics.
 - **Global Ctrl+K Command Palette**: Fast keyboard-driven command palette for game switching, navigation, audits, and quick actions.
 
+### 🛡️ Reliability, Crash Recovery & Privacy
+- **Structured Rolling Logs**: Tracing-powered daily rolling logs (`yago/logs/yago.log`) with automatic 7-day log rotation and startup pruning.
+- **Global Panic Hook & Crash Recovery**: Captures fatal backtraces and system metrics into timestamped crash logs with post-crash recovery alerts.
+- **Atomic Persistence & .bak Self-Healing**: All database and settings writes sync atomically to disk, rotate `.bak` snapshots, and auto-quarantine corrupt files.
+- **Startup State Sanitizer**: Auto-recovers stuck downloads to `Queued`, flags missing game folders with 1-click relocation, and cleans up stale `.yago_session_lock` files.
+- **Single-Instance Guard & Deep-Link Forwarder**: Loopback IPC prevents duplicate instances and forwards `yago://` 1-click install links directly into the running instance.
+- **1-Click Redacted Bug Report Bundle**: Exports a privacy-scrubbed diagnostic `.zip` with all OS usernames, home paths, authkeys, and mod names removed.
+
 ---
 
 ## Tech Stack

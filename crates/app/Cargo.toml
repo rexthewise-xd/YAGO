@@ -23,6 +23,8 @@ walkdir = "2.5.0"
 urlencoding = "2"
 include_dir = "0.7"
 dirs = "6"
+zip = { version = "2.2.2", features = ["deflate"] }
+regex = "1"
 
 vfs = { path = "../vfs" }
 storage = { path = "../storage" }

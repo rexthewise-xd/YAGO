@@ -3,6 +3,8 @@
 use dioxus::desktop::{wry, Config as DesktopConfig, WindowBuilder};
 use dioxus::prelude::*;
 use std::borrow::Cow;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 mod app;
 mod art;
@@ -14,10 +16,14 @@ mod state;
 mod themes;
 mod views;
 
+pub type DeepLinkReceiver = Arc<Mutex<tokio::sync::mpsc::UnboundedReceiver<String>>>;
+
 fn main() {
     let app_data = yago_app::default_app_data_dir();
     let _log_guard = yago_app::init_logging(&app_data);
     yago_app::install_panic_hook(app_data.clone());
+
+    let deep_link = std::env::args().find(|a| a.starts_with("yago://"));
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -25,6 +31,19 @@ fn main() {
         .expect("tokio runtime");
 
     rt.block_on(async {
+        let mut instance_guard = match yago_app::acquire_or_forward(&app_data, deep_link.as_deref()).await {
+            yago_app::InstanceResult::ForwardedToExisting => {
+                eprintln!("Forwarded request to existing YAGO instance. Exiting.");
+                return;
+            }
+            yago_app::InstanceResult::Primary(guard) => guard,
+        };
+
+        let raw_rx = instance_guard
+            .take_receiver()
+            .unwrap_or_else(|| tokio::sync::mpsc::unbounded_channel().1);
+        let deep_link_rx: DeepLinkReceiver = Arc::new(Mutex::new(raw_rx));
+
         let webview_dir = app_data.join("webview");
         let _ = std::fs::create_dir_all(&webview_dir);
 
@@ -59,6 +78,10 @@ fn main() {
                     })
             })
             .with_context(init_result)
+            .with_context(deep_link_rx)
             .launch(app::App);
+
+        // Keep instance guard in scope until window closes
+        drop(instance_guard);
     });
 }

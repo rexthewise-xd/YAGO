@@ -274,6 +274,41 @@ fn GeneralTab() -> Element {
                         IconSvg { name: IconName::Folder, size: 14 }
                         "OPEN LOGS FOLDER"
                     }
+                    button {
+                        class: "btn btn-sm",
+                        onclick: {
+                            let store = store.clone();
+                            move |_| {
+                                let core = store.core.clone();
+                                let mut s = store.clone();
+                                spawn(async move {
+                                    match core.export_bug_report(None).await {
+                                        Ok(zip_path) => {
+                                            s.toast(ToastKind::Success, format!("Created bug report: {zip_path}"));
+                                            let _ = core.open_path(zip_path).await;
+                                        }
+                                        Err(e) => s.toast(ToastKind::Error, format!("Bug report failed: {e}")),
+                                    }
+                                });
+                            }
+                        },
+                        IconSvg { name: IconName::Download, size: 14 }
+                        "CREATE BUG REPORT (.ZIP)"
+                    }
+                    button {
+                        class: "btn btn-sm",
+                        onclick: {
+                            let store = store.clone();
+                            move |_| {
+                                let core = store.core.clone();
+                                spawn(async move {
+                                    let _ = core.open_path("https://github.com/rexthewise-xd/YAGO/issues/new".to_string()).await;
+                                });
+                            }
+                        },
+                        IconSvg { name: IconName::Launch, size: 14 }
+                        "REPORT ISSUE ON GITHUB"
+                    }
                 }
             }
 

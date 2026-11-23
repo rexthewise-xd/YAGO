@@ -31,6 +31,17 @@ YAGO is designed with privacy, account security, and streamer protection as firs
 
 ---
 
+## Reliability, Crash Recovery & Privacy Diagnostics
+
+- **Structured Rolling Logs**: Stores daily rolling logs under `yago/logs/yago.log` with automatic startup pruning of logs older than 7 days, preventing unbounded disk growth.
+- **Global Panic Hook & Crash Inspection**: Panics capture backtraces and environment details into timestamped `logs/crash-<timestamp>.log`. The UI detects unhandled crashes on subsequent launches, presenting an inspection banner.
+- **Atomic `.bak` Persistence & Corruption Quarantine**: Settings and game databases write atomically through `.tmp` files and rotate `.bak` snapshots. If corruption is detected, the damaged file is safely quarantined (`*.corrupt.<timestamp>`) and auto-restored from `.bak`.
+- **Startup State Reconciliation**: Recovers interrupted downloads from `Downloading`/`Updating` to `Queued`, flags missing game executables, detects orphaned mod folders with 1-click database pruning, and removes leftover `.yago_session_lock` files from crashed proxy sessions.
+- **Single-Instance IPC & Deep-Link Forwarding**: A local loopback guard ensures only one YAGO instance runs per data directory, forwarding any secondary `yago://` 1-click links into the primary window without restarting.
+- **1-Click Redacted Bug Report Bundle**: Generates a shareable `.zip` archive containing system metrics, recent logs, and settings with all OS usernames, home directories, `authkey` parameters, and gacha URLs strictly redacted for privacy.
+
+---
+
 ## Disclaimer
 
 YAGO is an open-source tool provided for personal customization.
