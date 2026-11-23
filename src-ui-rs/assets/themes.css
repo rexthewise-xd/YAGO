@@ -1,92 +1,356 @@
-/* YAGO theme palettes — variable overrides on the Mission Control layout */
+/* YAGO theme palettes — variable overrides on the Mission Control layout
+   Elevated contrast (WCAG AA+), vibrant gacha-inspired palettes, 3-tier surface hierarchy, and luminous accent glows.
+*/
 
-.theme-rose-pine {
+/* 1. Mission Control (Default) */
+.theme-linear,
+.theme-mission {
   color-scheme: dark;
-  --bg: #191724; --panel: #1f1d2e; --panel-2: #26233a; --border: #403d52;
-  --text: #e0def4; --muted: #908caa; --accent-base: #ebbcba;
-  --ok: #9ccfd8; --warn: #f6c177; --danger: #eb6f92;
+  --bg: #090d16;
+  --panel: #101624;
+  --panel-2: #192236;
+  --bg-elevated: #212c45;
+  --border: rgba(255, 255, 255, 0.13);
+  --border-hover: rgba(34, 211, 238, 0.45);
+  --text: #f1f5f9;
+  --muted: #94a3b8;
+  --text-sec: #94a3b8;
+  --accent-base: #22d3ee;
+  --accent-sec: #38bdf8;
+  --accent-ambient: rgba(34, 211, 238, 0.07);
+  --accent-glow: rgba(34, 211, 238, 0.28);
+  --btn-accent-fg: #05101a;
+  --ok: #34d399;
+  --warn: #fbbf24;
+  --danger: #f87171;
 }
-.theme-rose-pine-moon {
-  color-scheme: dark;
-  --bg: #232136; --panel: #2a273f; --panel-2: #393552; --border: #44415a;
-  --text: #e0def4; --muted: #908caa; --accent-base: #ea9a97;
-  --ok: #9ccfd8; --warn: #f6c177; --danger: #eb6f92;
-}
-.theme-rose-pine-dawn {
-  color-scheme: light;
-  --bg: #faf4ed; --panel: #fffaf3; --panel-2: #f2e9e1; --border: #dfdad9;
-  --text: #575279; --muted: #797593; --accent-base: #d7827e;
-  --ok: #56949f; --warn: #ea9d34; --danger: #b4637a;
-}
-.theme-ctp-mocha {
-  color-scheme: dark;
-  --bg: #1e1e2e; --panel: #181825; --panel-2: #313244; --border: #45475a;
-  --text: #cdd6f4; --muted: #a6adc8; --accent-base: #cba6f7;
-  --ok: #a6e3a1; --warn: #f9e2af; --danger: #f38ba8;
-}
-.theme-ctp-macchiato {
-  color-scheme: dark;
-  --bg: #24273a; --panel: #1e2030; --panel-2: #363a4f; --border: #494d64;
-  --text: #cad3f5; --muted: #a5adcb; --accent-base: #f5bde6;
-  --ok: #a6da95; --warn: #eed49f; --danger: #ed8796;
-}
-.theme-tokyo-storm {
-  color-scheme: dark;
-  --bg: #24283b; --panel: #1f2335; --panel-2: #292e42; --border: #3b4261;
-  --text: #c0caf5; --muted: #565f89; --accent-base: #7aa2f7;
-  --ok: #9ece6a; --warn: #e0af68; --danger: #f7768e;
-}
-.theme-tokyo-night {
-  color-scheme: dark;
-  --bg: #1a1b26; --panel: #16161e; --panel-2: #292e42; --border: #3b4261;
-  --text: #c0caf5; --muted: #565f89; --accent-base: #bb9af7;
-  --ok: #9ece6a; --warn: #e0af68; --danger: #f7768e;
-}
-.theme-nord {
-  color-scheme: dark;
-  --bg: #2e3440; --panel: #3b4252; --panel-2: #434c5e; --border: #4c566a;
-  --text: #eceff4; --muted: #9aa5b8; --accent-base: #88c0d0;
-  --ok: #a3be8c; --warn: #ebcb8b; --danger: #bf616a;
-}
-.theme-dracula {
-  color-scheme: dark;
-  --bg: #282a36; --panel: #21222c; --panel-2: #343746; --border: #44475a;
-  --text: #f8f8f2; --muted: #6272a4; --accent-base: #bd93f9;
-  --ok: #50fa7b; --warn: #f1fa8c; --danger: #ff5555;
-}
-.theme-gruvbox-dark {
-  color-scheme: dark;
-  --bg: #282828; --panel: #32302f; --panel-2: #3c3836; --border: #504945;
-  --text: #ebdbb2; --muted: #a89984; --accent-base: #fabd2f;
-  --ok: #b8bb26; --warn: #fe8019; --danger: #fb4934;
-}
-.theme-one-dark {
-  color-scheme: dark;
-  --bg: #282c34; --panel: #21252b; --panel-2: #2c313a; --border: #3e4451;
-  --text: #abb2bf; --muted: #5c6370; --accent-base: #61afef;
-  --ok: #98c379; --warn: #e5c07b; --danger: #e06c75;
-}
-.theme-sakura {
-  color-scheme: light;
-  --bg: #fff5f7; --panel: #ffeef2; --panel-2: #ffe4ea; --border: #f7cdd6;
-  --text: #5a3a44; --muted: #a87684; --accent-base: #ff8da1;
-  --ok: #6bbf8a; --warn: #e8a13c; --danger: #e05a72;
-}
+
+/* 2. Astral Express (Solar Amber / Starlight Gold on Deep Cosmic Navy) */
 .theme-astral {
   color-scheme: dark;
-  --bg: #0b0e1a; --panel: #12162a; --panel-2: #1b2138; --border: #2a3350;
-  --text: #e8ecf8; --muted: #8a93b5; --accent-base: #f1c40f;
-  --ok: #4ade80; --warn: #f1c40f; --danger: #f87171;
+  --bg: #0b0f1e;
+  --panel: #13192f;
+  --panel-2: #1e2645;
+  --bg-elevated: #283359;
+  --border: rgba(250, 204, 21, 0.18);
+  --border-hover: rgba(250, 204, 21, 0.5);
+  --text: #f8fafc;
+  --muted: #a5b4fc;
+  --text-sec: #a5b4fc;
+  --accent-base: #facc15;
+  --accent-sec: #fb923c;
+  --accent-ambient: rgba(250, 204, 21, 0.08);
+  --accent-glow: rgba(250, 204, 21, 0.3);
+  --btn-accent-fg: #13192f;
+  --ok: #4ade80;
+  --warn: #facc15;
+  --danger: #f87171;
 }
+
+/* 3. Hollow Zero (Cyber Neon Lime / Acid Green on Pitch Obsidian) */
 .theme-hollow {
   color-scheme: dark;
-  --bg: #050505; --panel: #0d0d0d; --panel-2: #161616; --border: #2a2a2a;
-  --text: #e8e8e8; --muted: #8a8a8a; --accent-base: #a3ff00;
-  --ok: #a3ff00; --warn: #ffd000; --danger: #ff3b3b;
+  --bg: #08090a;
+  --panel: #111315;
+  --panel-2: #1b1e22;
+  --bg-elevated: #262a30;
+  --border: rgba(163, 230, 53, 0.2);
+  --border-hover: rgba(163, 230, 53, 0.55);
+  --text: #f4f4f5;
+  --muted: #a1a1aa;
+  --text-sec: #a1a1aa;
+  --accent-base: #a3e635;
+  --accent-sec: #22c55e;
+  --accent-ambient: rgba(163, 230, 53, 0.08);
+  --accent-glow: rgba(163, 230, 53, 0.32);
+  --btn-accent-fg: #08090a;
+  --ok: #a3e635;
+  --warn: #facc15;
+  --danger: #ff4757;
 }
+
+/* 4. Sakura Blossom (Neon Sakura Pink on Deep Midnight Plum) */
+.theme-sakura {
+  color-scheme: dark;
+  --bg: #140d14;
+  --panel: #1f1420;
+  --panel-2: #2d1c2e;
+  --bg-elevated: #3d263f;
+  --border: rgba(251, 113, 133, 0.2);
+  --border-hover: rgba(251, 113, 133, 0.5);
+  --text: #fff1f2;
+  --muted: #fda4af;
+  --text-sec: #fda4af;
+  --accent-base: #fb7185;
+  --accent-sec: #f43f5e;
+  --accent-ambient: rgba(251, 113, 133, 0.08);
+  --accent-glow: rgba(251, 113, 133, 0.3);
+  --btn-accent-fg: #140d14;
+  --ok: #4ade80;
+  --warn: #fbbf24;
+  --danger: #ff4d6d;
+}
+
+/* 5. Synthwave Neon (Electric Magenta & Cyan on Cyberpunk Violet) */
 .theme-synthwave {
   color-scheme: dark;
-  --bg: #2b0652; --panel: #370a63; --panel-2: #43107a; --border: #5d1a9e;
-  --text: #f5e6ff; --muted: #b08ad6; --accent-base: #ff00ff;
-  --ok: #00ffc8; --warn: #ffe600; --danger: #ff3860;
+  --bg: #160728;
+  --panel: #210c3b;
+  --panel-2: #301452;
+  --bg-elevated: #421c70;
+  --border: rgba(217, 70, 239, 0.22);
+  --border-hover: rgba(244, 63, 94, 0.55);
+  --text: #faf5ff;
+  --muted: #d8b4fe;
+  --text-sec: #d8b4fe;
+  --accent-base: #f43f5e;
+  --accent-sec: #d946ef;
+  --accent-ambient: rgba(244, 63, 94, 0.09);
+  --accent-glow: rgba(244, 63, 94, 0.35);
+  --btn-accent-fg: #ffffff;
+  --ok: #06b6d4;
+  --warn: #fbbf24;
+  --danger: #f43f5e;
+}
+
+/* 6. Tokyo Night (Astral Violet on Midnight Blue) */
+.theme-tokyo-night {
+  color-scheme: dark;
+  --bg: #11121d;
+  --panel: #181926;
+  --panel-2: #222436;
+  --bg-elevated: #2f334d;
+  --border: rgba(187, 154, 247, 0.18);
+  --border-hover: rgba(187, 154, 247, 0.48);
+  --text: #f0f3fe;
+  --muted: #9aa5ce;
+  --text-sec: #9aa5ce;
+  --accent-base: #bb9af7;
+  --accent-sec: #7aa2f7;
+  --accent-ambient: rgba(187, 154, 247, 0.07);
+  --accent-glow: rgba(187, 154, 247, 0.28);
+  --btn-accent-fg: #11121d;
+  --ok: #9ece6a;
+  --warn: #e0af68;
+  --danger: #f7768e;
+}
+
+/* 7. Tokyo Night Storm (Electric Azure on Slate Indigo) */
+.theme-tokyo-storm {
+  color-scheme: dark;
+  --bg: #1b1e2e;
+  --panel: #22263a;
+  --panel-2: #2c324c;
+  --bg-elevated: #383f60;
+  --border: rgba(122, 162, 247, 0.18);
+  --border-hover: rgba(122, 162, 247, 0.48);
+  --text: #f0f3fe;
+  --muted: #a9b1d6;
+  --text-sec: #a9b1d6;
+  --accent-base: #7aa2f7;
+  --accent-sec: #2ac3de;
+  --accent-ambient: rgba(122, 162, 247, 0.07);
+  --accent-glow: rgba(122, 162, 247, 0.28);
+  --btn-accent-fg: #11121d;
+  --ok: #9ece6a;
+  --warn: #e0af68;
+  --danger: #f7768e;
+}
+
+/* 8. Catppuccin Mocha (Pastel Lavender on Deep Espresso) */
+.theme-ctp-mocha {
+  color-scheme: dark;
+  --bg: #151521;
+  --panel: #1b1b2a;
+  --panel-2: #26263b;
+  --bg-elevated: #33334e;
+  --border: rgba(203, 166, 247, 0.18);
+  --border-hover: rgba(203, 166, 247, 0.45);
+  --text: #f5f6fc;
+  --muted: #bac2de;
+  --text-sec: #bac2de;
+  --accent-base: #cba6f7;
+  --accent-sec: #89b4fa;
+  --accent-ambient: rgba(203, 166, 247, 0.07);
+  --accent-glow: rgba(203, 166, 247, 0.28);
+  --btn-accent-fg: #151521;
+  --ok: #a6e3a1;
+  --warn: #f9e2af;
+  --danger: #f38ba8;
+}
+
+/* 9. Catppuccin Macchiato (Warm Indigo & Flamingo Pink) */
+.theme-ctp-macchiato {
+  color-scheme: dark;
+  --bg: #1c1e2e;
+  --panel: #222538;
+  --panel-2: #2d314a;
+  --bg-elevated: #3b405f;
+  --border: rgba(245, 189, 230, 0.18);
+  --border-hover: rgba(245, 189, 230, 0.45);
+  --text: #f4f5fc;
+  --muted: #b8c0e0;
+  --text-sec: #b8c0e0;
+  --accent-base: #f5bde6;
+  --accent-sec: #c6a0f6;
+  --accent-ambient: rgba(245, 189, 230, 0.07);
+  --accent-glow: rgba(245, 189, 230, 0.28);
+  --btn-accent-fg: #1c1e2e;
+  --ok: #a6da95;
+  --warn: #eed49f;
+  --danger: #ed8796;
+}
+
+/* 10. Rosé Pine (Rose / Gold on Pine Dusk) */
+.theme-rose-pine {
+  color-scheme: dark;
+  --bg: #14121f;
+  --panel: #1b1928;
+  --panel-2: #242236;
+  --bg-elevated: #312e47;
+  --border: rgba(235, 188, 186, 0.18);
+  --border-hover: rgba(235, 188, 186, 0.45);
+  --text: #f5f4fc;
+  --muted: #b0abc7;
+  --text-sec: #b0abc7;
+  --accent-base: #ebbcba;
+  --accent-sec: #c4a7e7;
+  --accent-ambient: rgba(235, 188, 186, 0.07);
+  --accent-glow: rgba(235, 188, 186, 0.28);
+  --btn-accent-fg: #14121f;
+  --ok: #9ccfd8;
+  --warn: #f6c177;
+  --danger: #eb6f92;
+}
+
+/* 11. Rosé Pine Moon (Moonlit Pine & Iris) */
+.theme-rose-pine-moon {
+  color-scheme: dark;
+  --bg: #1c1a2c;
+  --panel: #232037;
+  --panel-2: #2f2b48;
+  --bg-elevated: #3d385c;
+  --border: rgba(234, 154, 151, 0.18);
+  --border-hover: rgba(234, 154, 151, 0.45);
+  --text: #f5f4fc;
+  --muted: #b4aecb;
+  --text-sec: #b4aecb;
+  --accent-base: #ea9a97;
+  --accent-sec: #3e8fb0;
+  --accent-ambient: rgba(234, 154, 151, 0.07);
+  --accent-glow: rgba(234, 154, 151, 0.28);
+  --btn-accent-fg: #1c1a2c;
+  --ok: #9ccfd8;
+  --warn: #f6c177;
+  --danger: #eb6f92;
+}
+
+/* 12. Rosé Pine Dawn (Parchment & Rose Coral - Light Mode) */
+.theme-rose-pine-dawn {
+  color-scheme: light;
+  --bg: #f9f5f0;
+  --panel: #ffffff;
+  --panel-2: #f0e9df;
+  --bg-elevated: #e6ded3;
+  --border: #dcd4c8;
+  --border-hover: #d7827e;
+  --text: #1f1d2e;
+  --muted: #575279;
+  --text-sec: #575279;
+  --accent-base: #d7827e;
+  --accent-sec: #907aa9;
+  --accent-ambient: rgba(215, 130, 126, 0.08);
+  --accent-glow: rgba(215, 130, 126, 0.25);
+  --btn-accent-fg: #ffffff;
+  --ok: #56949f;
+  --warn: #ea9d34;
+  --danger: #b4637a;
+}
+
+/* 13. Nord Arctic (Glacial Frost on Polar Night) */
+.theme-nord {
+  color-scheme: dark;
+  --bg: #1d212a;
+  --panel: #242935;
+  --panel-2: #2e3442;
+  --bg-elevated: #3b4252;
+  --border: rgba(136, 192, 208, 0.18);
+  --border-hover: rgba(136, 192, 208, 0.45);
+  --text: #f8fafc;
+  --muted: #abbad0;
+  --text-sec: #abbad0;
+  --accent-base: #88c0d0;
+  --accent-sec: #81a1c1;
+  --accent-ambient: rgba(136, 192, 208, 0.07);
+  --accent-glow: rgba(136, 192, 208, 0.28);
+  --btn-accent-fg: #1d212a;
+  --ok: #a3be8c;
+  --warn: #ebcb8b;
+  --danger: #bf616a;
+}
+
+/* 14. Dracula Vampire (Gothic Slate & Neon Violet) */
+.theme-dracula {
+  color-scheme: dark;
+  --bg: #191a21;
+  --panel: #21222c;
+  --panel-2: #2d2f3d;
+  --bg-elevated: #3a3d4e;
+  --border: rgba(189, 147, 249, 0.2);
+  --border-hover: rgba(189, 147, 249, 0.5);
+  --text: #f8f8f2;
+  --muted: #a4b1cd;
+  --text-sec: #a4b1cd;
+  --accent-base: #bd93f9;
+  --accent-sec: #ff79c6;
+  --accent-ambient: rgba(189, 147, 249, 0.08);
+  --accent-glow: rgba(189, 147, 249, 0.3);
+  --btn-accent-fg: #191a21;
+  --ok: #50fa7b;
+  --warn: #f1fa8c;
+  --danger: #ff5555;
+}
+
+/* 15. One Dark Pro (Deep Carbon & Vivid Blue) */
+.theme-one-dark {
+  color-scheme: dark;
+  --bg: #1a1d24;
+  --panel: #21252b;
+  --panel-2: #2b313a;
+  --bg-elevated: #363e49;
+  --border: rgba(97, 175, 239, 0.18);
+  --border-hover: rgba(97, 175, 239, 0.45);
+  --text: #f0f3f6;
+  --muted: #a0a8b7;
+  --text-sec: #a0a8b7;
+  --accent-base: #61afef;
+  --accent-sec: #98c379;
+  --accent-ambient: rgba(97, 175, 239, 0.07);
+  --accent-glow: rgba(97, 175, 239, 0.28);
+  --btn-accent-fg: #1a1d24;
+  --ok: #98c379;
+  --warn: #e5c07b;
+  --danger: #e06c75;
+}
+
+/* 16. Gruvbox Dark (Warm Charcoal & Solar Gold) */
+.theme-gruvbox-dark {
+  color-scheme: dark;
+  --bg: #1c1c1c;
+  --panel: #262423;
+  --panel-2: #32302f;
+  --bg-elevated: #413d3a;
+  --border: rgba(250, 189, 47, 0.2);
+  --border-hover: rgba(250, 189, 47, 0.5);
+  --text: #fbf1c7;
+  --muted: #d5c4a1;
+  --text-sec: #d5c4a1;
+  --accent-base: #fabd2f;
+  --accent-sec: #fe8019;
+  --accent-ambient: rgba(250, 189, 47, 0.08);
+  --accent-glow: rgba(250, 189, 47, 0.3);
+  --btn-accent-fg: #1c1c1c;
+  --ok: #b8bb26;
+  --warn: #fe8019;
+  --danger: #fb4934;
 }

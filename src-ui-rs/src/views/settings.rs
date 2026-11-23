@@ -175,40 +175,52 @@ fn GeneralTab() -> Element {
         div { class: "settings-section",
             h3 { class: "settings-section-title mono", "THEME & APPEARANCE" }
 
-            div { class: "theme-grid",
-                for theme in THEMES.iter() {
+            div { class: "setting-row",
+                div { class: "setting-row-left",
+                    div { class: "setting-icon",
+                        IconSvg { name: IconName::Image, size: 18 }
+                    }
+                    div {
+                        div { class: "setting-label", "Color Theme" }
+                        div { class: "setting-desc", "Select visual palette and surface aesthetic" }
+                    }
+                }
+                div { class: "setting-row-right", style: "display: flex; align-items: center; gap: 10px;",
                     {
-                        let tid = theme.id.to_string();
-                        let selected = current_theme == tid;
+                        let active_theme = THEMES.iter().find(|t| t.id == current_theme).or_else(|| THEMES.first());
+                        let (dot_bg, dot_acc1, dot_acc2) = active_theme
+                            .map(|t| (t.bg, t.accent, t.accent_sec))
+                            .unwrap_or(("#090d16", "#22d3ee", "#38bdf8"));
+
                         rsx! {
-                            button {
-                                key: "{tid}",
-                                class: if selected { "theme-card selected" } else { "theme-card" },
-                                onclick: {
-                                    let store = store.clone();
-                                    let tid = tid.clone();
-                                    move |_| {
-                                        let mut config = (store.app_config)();
-                                        config.theme = tid.clone();
-                                        let core = store.core.clone();
-                                        let config2 = config.clone();
-                                        store.clone().call(
-                                            async move { core.update_app_config(config2).await },
-                                            |_, _| {},
-                                        );
-                                    }
-                                },
-                                div { class: "theme-swatch theme-{theme.id}" }
-                                div { class: "theme-meta",
-                                    span { class: "theme-name", "{theme.name}" }
-                                    span { class: "theme-engine mono", "{theme.engine}" }
-                                }
-                                if selected {
-                                    div { class: "theme-check",
-                                        IconSvg { name: IconName::Check, size: 14 }
-                                    }
-                                }
+                            div {
+                                class: "theme-dots-preview",
+                                title: "Palette preview (Canvas / Accent / Secondary)",
+                                style: "display: flex; align-items: center; gap: 5px; padding: 4px 8px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 12px;",
+                                span { style: "width: 10px; height: 10px; border-radius: 50%; background: {dot_bg}; border: 1px solid rgba(255,255,255,0.25);" }
+                                span { style: "width: 10px; height: 10px; border-radius: 50%; background: {dot_acc1}; box-shadow: 0 0 6px {dot_acc1}80;" }
+                                span { style: "width: 10px; height: 10px; border-radius: 50%; background: {dot_acc2};" }
                             }
+                        }
+                    }
+                    select {
+                        class: "input select-sm",
+                        value: "{current_theme}",
+                        onchange: {
+                            let store = store.clone();
+                            move |evt: Event<FormData>| {
+                                let mut config = (store.app_config)();
+                                config.theme = evt.value();
+                                let core = store.core.clone();
+                                let config2 = config.clone();
+                                store.clone().call(
+                                    async move { core.update_app_config(config2).await },
+                                    |_, _| {},
+                                );
+                            }
+                        },
+                        for theme in THEMES.iter() {
+                            option { value: "{theme.id}", "{theme.name} ({theme.engine})" }
                         }
                     }
                 }
