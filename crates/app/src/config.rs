@@ -15,6 +15,8 @@ pub struct AppConfig {
     pub theme: String,
     #[serde(default = "default_registries")]
     pub registries: Vec<resources::RegistrySource>,
+    #[serde(default)]
+    pub allow_third_party_scripts: bool,
 }
 
 fn default_theme() -> String {
@@ -62,6 +64,7 @@ impl Default for AppConfig {
             yago_update_url: "https://api.github.com/repos/rexthewise-xd/YAGO/releases/latest".to_string(),
             theme: "linear".to_string(),
             registries: default_registries(),
+            allow_third_party_scripts: false,
         }
     }
 }

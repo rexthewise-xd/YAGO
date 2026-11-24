@@ -248,6 +248,146 @@ impl AppCore {
 
         Ok(reports)
     }
+
+    /// Scans enabled synced registries under app_data_dir/registry/<id>/scripts/**/*.rhai
+    pub async fn list_registry_scripts(&self) -> Result<Vec<RegistryScriptInfo>, String> {
+        let (registries, allow_third_party) = {
+            let config = self.app_config.lock().await;
+            (config.registries.clone(), config.allow_third_party_scripts)
+        };
+
+        let mut results = Vec::new();
+        let registry_root = self.app_data_dir.join("registry");
+
+        for reg in registries {
+            if !reg.enabled {
+                continue;
+            }
+            let reg_dir = registry_root.join(&reg.id);
+            let scripts_dir = reg_dir.join("scripts");
+            if scripts_dir.exists() {
+                for entry in walkdir::WalkDir::new(&scripts_dir)
+                    .into_iter()
+                    .filter_map(|e| e.ok())
+                {
+                    let p = entry.path();
+                    if p.is_file() && p.extension().and_then(|s| s.to_str()) == Some("rhai") {
+                        if let Ok(rel) = p.strip_prefix(&reg_dir) {
+                            let rel_path = rel.to_string_lossy().replace('\\', "/");
+                            let lower = rel_path.to_lowercase();
+                            let kind = if lower.contains("audit") {
+                                "audit".to_string()
+                            } else if lower.contains("fixer") {
+                                "fixer".to_string()
+                            } else {
+                                "hook".to_string()
+                            };
+
+                            let trusted = reg.official || allow_third_party;
+
+                            results.push(RegistryScriptInfo {
+                                registry_id: reg.id.clone(),
+                                official: reg.official,
+                                rel_path,
+                                kind,
+                                trusted,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        results.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
+        Ok(results)
+    }
+
+    /// Runs a mod fixer script from a registry against a specific mod, enforcing the trust gate
+    /// and snapshotting backup files when not in dry_run mode.
+    pub async fn run_mod_rhai_fixer(
+        &self,
+        mod_id: String,
+        registry_id: String,
+        rel_path: String,
+        dry_run: bool,
+    ) -> Result<scripting::ScriptExecutionResult, String> {
+        let (is_official, allow_third_party) = {
+            let config = self.app_config.lock().await;
+            let reg = config
+                .registries
+                .iter()
+                .find(|r| r.id == registry_id)
+                .ok_or_else(|| format!("Registry '{}' not found", registry_id))?;
+            (reg.official, config.allow_third_party_scripts)
+        };
+
+        if !is_official && !allow_third_party {
+            return Err(format!(
+                "Security Block: 3rd-party script execution is disabled for registry '{}'. Enable 'Allow 3rd-Party Registry Scripts' in Settings.",
+                registry_id
+            ));
+        }
+
+        let reg_dir = self.app_data_dir.join("registry").join(&registry_id);
+        let safe_rel = if rel_path.starts_with("scripts/") {
+            rel_path.clone()
+        } else {
+            format!("scripts/{}", rel_path.trim_start_matches('/'))
+        };
+        let script_file = reg_dir.join(&safe_rel);
+        if !script_file.exists() {
+            return Err(format!("Script file not found: {:?}", script_file));
+        }
+
+        let script_src = std::fs::read_to_string(&script_file)
+            .map_err(|e| format!("Failed to read script: {}", e))?;
+
+        let mod_root = self.mod_root(&mod_id).await?;
+
+        // When !dry_run, create a timestamped backup under mod_root/.yago_backups/<timestamp>/
+        if !dry_run {
+            let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string();
+            let backup_dir = mod_root.join(".yago_backups").join(&timestamp);
+            let _ = std::fs::create_dir_all(&backup_dir);
+            for entry in walkdir::WalkDir::new(&mod_root)
+                .into_iter()
+                .filter_entry(|e| e.file_name() != ".yago_backups")
+                .filter_map(|e| e.ok())
+            {
+                let p = entry.path();
+                if p.is_file() {
+                    let name = p.file_name().and_then(|s| s.to_str()).unwrap_or("");
+                    let is_ini = p
+                        .extension()
+                        .and_then(|s| s.to_str())
+                        .map(|s| s.to_lowercase())
+                        == Some("ini".to_string());
+                    let is_source = name.to_lowercase().ends_with(".ini.yago_source");
+                    if is_ini || is_source {
+                        if let Ok(rel) = p.strip_prefix(&mod_root) {
+                            let dest = backup_dir.join(rel);
+                            if let Some(parent) = dest.parent() {
+                                let _ = std::fs::create_dir_all(parent);
+                            }
+                            let _ = std::fs::copy(p, dest);
+                        }
+                    }
+                }
+            }
+        }
+
+        scripting::ScriptHost::run_fixer_script(&script_src, &mod_root, dry_run)
+            .map_err(|e| e.to_string())
+    }
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
+pub struct RegistryScriptInfo {
+    pub registry_id: String,
+    pub official: bool,
+    pub rel_path: String,
+    pub kind: String, // "audit" | "fixer" | "hook"
+    pub trusted: bool,
 }
 
 #[cfg(test)]
@@ -406,5 +546,175 @@ mod tests {
                 Some(&"new_hash".to_string())
             );
         }
+    }
+
+    #[tokio::test]
+    async fn test_registry_rhai_script_trust_and_audit_execution() {
+        let dir = tempdir().unwrap();
+        let core = init_with_dir(dir.path().to_path_buf()).await.unwrap();
+
+        // 1. Create a dummy mod and game
+        let game_id = "genshin".to_string();
+        let game_dir = dir.path().join("GenshinGame");
+        std::fs::create_dir_all(&game_dir).unwrap();
+        let exe_path = game_dir.join("GenshinImpact.exe");
+        std::fs::write(&exe_path, "fake exe").unwrap();
+
+        let mod_id = uuid::Uuid::new_v4();
+        let mod_dir = dir.path().join("TestMod");
+        std::fs::create_dir_all(&mod_dir).unwrap();
+        let mod_ini = mod_dir.join("mod.ini");
+        std::fs::write(&mod_ini, "[TextureOverrideBody]\nhash = deadbeef\n").unwrap();
+
+        let mod_record = storage::models::ModRecord {
+            id: mod_id,
+            owner_game_id: game_id.clone(),
+            path: mod_dir.clone(),
+            size: "100".to_string(),
+            meta: storage::models::ModMetadata {
+                name: "Test Mod".to_string(),
+                version: "1.0".to_string(),
+                author: "Tester".to_string(),
+                url: None,
+                preview_image: None,
+                description: None,
+                gb_mod_id: None,
+                gb_date_updated: None,
+            },
+            compatibility: storage::models::ModCompatibility {
+                game: game_id.clone(),
+                character: "Genshin".to_string(),
+                hashes: vec![],
+                fingerprint: "".to_string(),
+            },
+            config: storage::models::ModConfig::default(),
+            enabled: true,
+            added_at: chrono::Utc::now(),
+        };
+
+        let mut db = storage::LibraryDatabase::default();
+        db.mods.insert(mod_id, mod_record);
+        db.games.insert(
+            game_id.clone(),
+            storage::models::GameConfig {
+                id: game_id.clone(),
+                install_path: game_dir.clone(),
+                exe_path: exe_path.clone(),
+                exe_name: "GenshinImpact.exe".to_string(),
+                ..Default::default()
+            },
+        );
+
+        {
+            let mut dbs = core.game_dbs.lock().await;
+            dbs.insert(game_id.clone(), db);
+        }
+
+        // 2. Prepare 3rd-party registry with a fixer script and an audit script
+        let reg_temp = tempdir().unwrap();
+        let scripts_dir = reg_temp.path().join("scripts");
+        let audits_dir = scripts_dir.join("audits");
+        let fixers_dir = scripts_dir.join("fixers");
+        std::fs::create_dir_all(&audits_dir).unwrap();
+        std::fs::create_dir_all(&fixers_dir).unwrap();
+
+        let fixer_script_content = r#"
+            let content = fs_read_text("mod.ini");
+            let replaced = ini_replace_hash(content, "deadbeef", "cafebabe");
+            fs_write_text("mod.ini", replaced);
+            #{ fixed: true }
+        "#;
+        let fixer_path = fixers_dir.join("fix_body.rhai");
+        std::fs::write(&fixer_path, fixer_script_content).unwrap();
+
+        let audit_script_content = r#"
+            emit_warning("Warning", "Registry Audit: Test Warning", "Triggered by registry rhai audit");
+        "#;
+        let audit_path = audits_dir.join("test_audit.rhai");
+        std::fs::write(&audit_path, audit_script_content).unwrap();
+
+        let index = resources::RegistryIndex {
+            schema_version: 1,
+            registry_version: "1.0.0".to_string(),
+            min_yago_version: Some("0.1.0".to_string()),
+            updated_at: "2026-11-24T00:00:00Z".to_string(),
+            entries: vec![
+                resources::RegistryEntry {
+                    path: "scripts/fixers/fix_body.rhai".to_string(),
+                    category: "script".to_string(),
+                    sha256: resources::compute_sha256(fixer_script_content.as_bytes()),
+                    size_bytes: Some(fixer_script_content.len() as u64),
+                },
+                resources::RegistryEntry {
+                    path: "scripts/audits/test_audit.rhai".to_string(),
+                    category: "script".to_string(),
+                    sha256: resources::compute_sha256(audit_script_content.as_bytes()),
+                    size_bytes: Some(audit_script_content.len() as u64),
+                },
+            ],
+        };
+        let index_bytes = serde_json::to_vec_pretty(&index).unwrap();
+        std::fs::write(reg_temp.path().join("index.json"), index_bytes).unwrap();
+
+        // 3. Register as 3rd-party registry (official: false)
+        let reg_url = format!("file://{}", reg_temp.path().display());
+        core.add_registry("Third Party Reg".to_string(), reg_url)
+            .await
+            .unwrap();
+
+        let sync_res = core.sync_all_registries().await.unwrap();
+        assert!(sync_res.iter().any(|r| r.registry_id == "third-party-reg"));
+
+        // 4. Test trust gate: fixer is blocked when allow_third_party_scripts is false
+        let blocked_res = core
+            .run_mod_rhai_fixer(
+                mod_id.to_string(),
+                "third-party-reg".to_string(),
+                "scripts/fixers/fix_body.rhai".to_string(),
+                false,
+            )
+            .await;
+        assert!(blocked_res.is_err());
+        assert!(blocked_res.unwrap_err().contains("Security Block"));
+
+        // Audit warning from 3rd-party is also not run in run_graphics_audit because not trusted
+        let initial_audits = core.run_graphics_audit(game_id.clone()).await.unwrap();
+        assert!(!initial_audits
+            .iter()
+            .any(|w| w.title == "Registry Audit: Test Warning"));
+
+        // 5. Enable allow_third_party_scripts
+        {
+            let mut cfg = core.app_config.lock().await;
+            cfg.allow_third_party_scripts = true;
+        }
+
+        // Now fixer succeeds and snapshots backup
+        let success_res = core
+            .run_mod_rhai_fixer(
+                mod_id.to_string(),
+                "third-party-reg".to_string(),
+                "scripts/fixers/fix_body.rhai".to_string(),
+                false,
+            )
+            .await
+            .unwrap();
+        assert_eq!(success_res.modified_files, vec!["mod.ini"]);
+        let new_mod_ini = std::fs::read_to_string(&mod_ini).unwrap();
+        assert!(new_mod_ini.contains("hash = cafebabe"));
+
+        // Verify .yago_backups was created
+        assert!(mod_dir.join(".yago_backups").exists());
+
+        // Now run_graphics_audit executes the audit script and includes its warning
+        let audit_warnings = core.run_graphics_audit(game_id.clone()).await.unwrap();
+        let audit_hit = audit_warnings
+            .iter()
+            .find(|w| w.title == "Registry Audit: Test Warning");
+        assert!(audit_hit.is_some());
+        assert_eq!(
+            audit_hit.unwrap().message,
+            "Triggered by registry rhai audit"
+        );
     }
 }

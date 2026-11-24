@@ -12,9 +12,10 @@ YAGO/
 │   ├── app/           # Application coordinator (AppCore, command handlers, event bus)
 │   ├── ini/           # Nom-based AST parser & serializer for 3DMigoto INI syntax
 │   ├── launcher/      # Wine/Proton runner resolution, umu-run, graphics audit, input routing
-│   ├── loader/        # Proxy DLL installation, RabbitWrapper chaining, Linux shield interceptor
+│   ├── loader/        # LoaderSpec abstraction, multi-strategy deployment, proxy DLL injection, RabbitWrapper
 │   ├── mod_patches/   # Router compilation, DVT sync, diagnostic parser, patch fixer, WebGL mesh extractor
-│   ├── resources/     # GitHub release downloads (GE-Proton, ReShade, shared effects), GameBanana API v11
+│   ├── resources/     # Multi-registry SHA-256 sync engine, GitHub release downloads, GameBanana API v11
+│   ├── scripting/     # Sandboxed Rhai scripting engine, capability-jailed mod_fs/INI APIs, trust gate
 │   ├── storage/       # Decentralized database (Librarian), loadout bundles, clean exporter, wish extractor
 │   ├── sync/          # Sophon protocol client, Kuro Games CDN client, streaming MD5 verifier, delta patcher
 │   └── vfs/           # Virtual filesystem (symlinks/junctions), multi-format archive extraction, DDS transcoding
@@ -59,3 +60,25 @@ YAGO/
 - **Diagnostics Parser**: Streams the tail of `d3d11_log.txt` to isolate syntax errors and missing asset references.
 - **Offline WebGL 3D Mesh Engine**: Inline WebGL renderer extracting vertex and index buffers from 3DMigoto mods for responsive 3D viewport inspection.
 - **Ctrl+K Command Palette**: Global fuzzy action switcher for seamless keyboard navigation.
+
+### 7. Multi-Registry Sync Engine (`crates/resources/src/registry.rs`)
+- **Deterministic SHA-256 Verification**: Connects to official and third-party registries (`https://` or `file://`), downloads `index.json`, and verifies SHA-256 digests before writing.
+- **Runtime Overlays**: Registry game manifests, character hashes, automated fixer rulesets, effect specs, and runner definitions dynamically overlay bundled assets without requiring an application release.
+- **Atomic Caching**: Synced definitions write to `.tmp` files and rename atomically into `app_data/registry/<id>/`.
+
+### 8. Declarative LoaderSpec & Multi-Strategy Deployment (`crates/loader/src/spec.rs`)
+- **Decoupled Loader Specifications**: Manifests define proxy DLLs, support directories, target mod paths, config files, reload keybinds, and Wine DLL overrides.
+- **Multi-Strategy Mod Deployment**:
+  - `ini_ast_3dmigoto`: Standard 3DMigoto namespacing, AST consolidation, and compound logic gates.
+  - `vfs_direct`: Pure virtual zero-copy symlinking of mod directories without INI parsing.
+  - `pak_merge`: Direct deployment of Unreal Engine `.pak`, `.ucas`, and `.utoc` archives to target mod directories.
+  - `scripted`: External hook-driven deployment pipelines.
+
+### 9. Sandboxed Rhai Scripting Engine & Trust Controls (`crates/scripting`)
+- **Pure Rust Sandbox**: Evaluates community Rhai scripts without native C dependencies or runtime vulnerabilities.
+- **Hard Resource Quotas**: Configurable execution limits (500k operations, 32 call stack levels, 2 MiB string bounds, collection caps).
+- **Jailed Host APIs**:
+  - `mod_fs`: Strictly jailed to the target directory with traversal protection (`..` prevention) and in-memory dry-run virtual overlays.
+  - `ini`: Safe parsing and editing (`ini_replace_hash`, `ini_get_value`, `ini_set_value`).
+  - `log` & `audit`: Structured warning emission.
+- **Trust Gate**: Official registry scripts are trusted by default; 3rd-party community scripts require explicit user opt-in in Settings. Automatic `.yago_backups/` snapshots protect mod files prior to execution.

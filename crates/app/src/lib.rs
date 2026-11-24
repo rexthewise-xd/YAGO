@@ -32,6 +32,7 @@ pub use commands::library::{
     SetupStatus,
 };
 pub use commands::profiles::BundleImportReport;
+pub use commands::registry::RegistryScriptInfo;
 pub use launcher::{GraphicsAuditWarning, InjectionMethod};
 pub use mod_patches::{
     DvtSyncReport, FileFixDiff, FixApplyReport, FixPreview, FixRuleSet, IniAnchor, LogDiagnostic,
@@ -41,6 +42,7 @@ pub use reconcile::{reconcile_library, ReconcileReport};
 pub use resources::effects::{EffectLibraryStatus, SharedEffectLibrary, TexFxConfig};
 pub use resources::gamebanana::{GbModDetail, GbModFile, GbModSummary, YagoDeepLink};
 pub use resources::registry::{RegistryEntry, RegistryIndex, RegistrySource, RegistrySyncReport};
+pub use scripting::{ScriptAuditWarning, ScriptExecutionResult};
 pub use storage::{BundleModEntry, DiscoveredGame, LoadoutBundle, RemoteCatalogEntry, StartMethod};
 
 use include_dir::{include_dir, Dir};

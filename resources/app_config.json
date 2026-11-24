@@ -16,6 +16,7 @@
     "https://picsum.photos/seed/fantasy-landscape/1920/1080"
   ],
   "theme": "linear",
+  "allow_third_party_scripts": false,
   "registries": [
     {
       "id": "official",

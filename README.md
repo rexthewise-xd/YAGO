@@ -62,6 +62,12 @@ A high-performance, cross-platform game mod manager and launcher built with Diox
 - **Single-Instance Guard & Deep-Link Forwarder**: Loopback IPC prevents duplicate instances and forwards `yago://` 1-click install links directly into the running instance.
 - **1-Click Redacted Bug Report Bundle**: Exports a privacy-scrubbed diagnostic `.zip` with all OS usernames, home paths, authkeys, and mod names removed.
 
+### 📦 Multi-Registry Ecosystem & Sandboxed Rhai Scripting
+- **Decoupled Community Registries**: Synchronizes game manifests, loaders, compatibility runners, shader libraries, character hashes, and fixer rules from multiple remote (`https://`) or local (`file://`) registries with SHA-256 verification and atomic local caching.
+- **Declarative LoaderSpec Abstraction**: Decoupled deployment strategies supporting standard 3DMigoto INI AST compilation (`ini_ast_3dmigoto`), direct symlink linking (`vfs_direct`), Unreal Engine archive deployment (`pak_merge`), and custom loader overrides.
+- **Strictly Sandboxed Rhai Scripting**: Pure Rust Rhai scripting engine with operational quotas (op limits, recursion depth, memory size bounds) and zero raw filesystem/network/env access.
+- **Jailed Host APIs & Trust Gate**: Jailed `mod_fs`, scoped INI patchers, and audit reporting with an opt-in trust gate protecting against untrusted 3rd-party registry scripts and automatic transactional snapshots (`.yago_backups/`).
+
 ---
 
 ## Tech Stack
@@ -82,9 +88,10 @@ A high-performance, cross-platform game mod manager and launcher built with Diox
 | **mod_patches** | Router compilation, DVT sync, diagnostic parser, patch fixer engine, WebGL mesh extractor |
 | **vfs** | Virtual filesystem (symlinks/junctions), multi-format extractors, DDS transcoder |
 | **launcher** | Wine/Proton runner resolution, umu-run dispatch, graphics audits, input routing |
-| **loader** | DLL proxy injection, RabbitWrapper chaining, Linux shield interceptor |
+| **loader** | LoaderSpec abstraction, multi-strategy deployment, DLL proxying, RabbitWrapper chaining |
 | **sync** | Sophon protocol, Kuro Games CDN client, streaming MD5 verifier, HDiff/KrDiff patcher |
-| **resources** | Remote asset management (GE-Proton, ReShade, shared effect libraries, GameBanana API) |
+| **resources** | Remote asset management, SHA-256 multi-registry sync (yago-registry), GameBanana API |
+| **scripting** | Sandboxed Rhai scripting engine, capability-jailed mod_fs/INI APIs, and trust gate |
 
 ---
 

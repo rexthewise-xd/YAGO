@@ -735,6 +735,17 @@ fn ReposTab() -> Element {
     let mut show_add_form = use_signal(|| false);
     let mut new_reg_name = use_signal(String::new);
     let mut new_reg_url = use_signal(String::new);
+    let mut discovered_scripts = use_signal(Vec::<yago_app::RegistryScriptInfo>::new);
+
+    let script_store = store.clone();
+    use_future(move || {
+        let core = script_store.core.clone();
+        async move {
+            if let Ok(list) = core.list_registry_scripts().await {
+                discovered_scripts.set(list);
+            }
+        }
+    });
 
     let repos = vec![
         (
@@ -776,6 +787,9 @@ fn ReposTab() -> Element {
                                             let dl: usize = reports.iter().map(|r| r.downloaded).sum();
                                             let skip: usize = reports.iter().map(|r| r.skipped_unchanged).sum();
                                             s.toast(ToastKind::Success, format!("Registries synced: {dl} downloaded, {skip} up-to-date"));
+                                            if let Ok(list) = core.list_registry_scripts().await {
+                                                discovered_scripts.set(list);
+                                            }
                                         }
                                         Err(e) => s.toast(ToastKind::Error, format!("Registry sync failed: {e}")),
                                     }
@@ -914,6 +928,77 @@ fn ReposTab() -> Element {
                                         }
                                     },
                                     div { class: "toggle-knob" }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            div { style: "margin-top: 18px;",
+                div { class: "setting-row",
+                    div { class: "setting-row-left",
+                        div { class: "setting-icon",
+                            IconSvg { name: IconName::Shield, size: 18 }
+                        }
+                        div {
+                            div { class: "setting-label", "Allow 3rd-Party Registry Scripts" }
+                            div { class: "setting-desc", "Permit execution of community-contributed .rhai audit & patch fixer scripts from non-official registries" }
+                        }
+                    }
+                    button {
+                        class: if config.allow_third_party_scripts { "toggle-switch on" } else { "toggle-switch" },
+                        title: "Toggle 3rd-party script permission",
+                        onclick: {
+                            let store = store.clone();
+                            move |_| {
+                                let mut cfg = (store.app_config)();
+                                cfg.allow_third_party_scripts = !cfg.allow_third_party_scripts;
+                                let core = store.core.clone();
+                                let cfg2 = cfg.clone();
+                                store.clone().call(
+                                    async move { core.update_app_config(cfg2).await },
+                                    |_, _| {},
+                                );
+                            }
+                        },
+                        div { class: "toggle-knob" }
+                    }
+                }
+            }
+
+            {
+                let script_list = (discovered_scripts)();
+                rsx! {
+                    div { style: "margin-top: 10px;",
+                        div { style: "display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; padding: 0 4px;",
+                            span { class: "mono", style: "font-size: 11px; font-weight: 700; color: var(--muted); letter-spacing: 1px;",
+                                "DISCOVERED REGISTRY SCRIPTS ({script_list.len()})"
+                            }
+                        }
+                        if script_list.is_empty() {
+                            div { class: "mono", style: "font-size: 11.5px; color: var(--muted); padding: 8px 12px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px;",
+                                "No .rhai scripts discovered in active registries."
+                            }
+                        } else {
+                            div { style: "display: flex; flex-direction: column; gap: 4px;",
+                                for s in script_list {
+                                    div {
+                                        key: "{s.registry_id}/{s.rel_path}",
+                                        style: "display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px;",
+                                        div { style: "display: flex; align-items: center; gap: 8px; min-width: 0;",
+                                            IconSvg { name: IconName::File, size: 14 }
+                                            span { class: "mono", style: "font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;", "{s.rel_path}" }
+                                            span { class: "tag mono", "{s.kind.to_uppercase()}" }
+                                        }
+                                        div { style: "flex-shrink: 0;",
+                                            if s.trusted {
+                                                span { class: "char-badge accent", "TRUSTED" }
+                                            } else {
+                                                span { class: "tag tag-danger mono", "BLOCKED (3RD-PARTY)" }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }

@@ -206,7 +206,7 @@ impl AppCore {
         Err("Mod not found".to_string())
     }
 
-    async fn mod_root(&self, mod_id: &str) -> Result<PathBuf, String> {
+    pub(crate) async fn mod_root(&self, mod_id: &str) -> Result<PathBuf, String> {
         let mod_uuid = Uuid::parse_str(mod_id).map_err(|e| e.to_string())?;
         let dbs = self.game_dbs.lock().await;
         for db in dbs.values() {

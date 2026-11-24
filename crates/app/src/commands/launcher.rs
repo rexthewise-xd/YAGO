@@ -936,7 +936,36 @@ impl AppCore {
                 .unwrap_or(install_path)
         };
 
-        Ok(launcher::audit_game_graphics(&game_id, &game_dir))
+        let mut warnings = launcher::audit_game_graphics(&game_id, &game_dir);
+
+        // Run trusted scripts/audits/*.rhai scripts from enabled registries
+        let scripts = self.list_registry_scripts().await.unwrap_or_default();
+        for script_info in scripts {
+            if script_info.trusted && script_info.kind == "audit" {
+                let script_path = self
+                    .app_data_dir
+                    .join("registry")
+                    .join(&script_info.registry_id)
+                    .join(&script_info.rel_path);
+                if script_path.exists() {
+                    if let Ok(src) = std::fs::read_to_string(&script_path) {
+                        if let Ok(result) = scripting::ScriptHost::run_audit_script(&src, &game_dir)
+                        {
+                            for w in result.warnings {
+                                warnings.push(launcher::GraphicsAuditWarning {
+                                    level: w.level,
+                                    title: w.title,
+                                    message: w.message,
+                                    fixable: false,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(warnings)
     }
 
     pub async fn apply_wuwa_engine_tweaks(&self, game_id: String) -> Result<(), String> {
