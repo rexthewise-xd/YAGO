@@ -1,5 +1,14 @@
 # YAGO - Yet Another Game Organizer
 
+> [!CAUTION]
+> # ⚠️ ACTIVE DEVELOPMENT IN PROGRESS — NOT READY FOR GENERAL USE
+>
+> **YAGO is currently in an early MVP development phase and is NOT ready for end-user installation.**
+>
+> **Please DO NOT attempt to install untested builds, run development binaries, or build from source.**
+> Architecture, configurations, and core systems are undergoing rapid iteration and breaking changes.
+> Stable binary releases, user guides, and official installation instructions will be published once the MVP milestone is complete and validated.
+
 A high-performance, cross-platform game mod manager and launcher built with Dioxus 0.7 and modular Rust crates.
 
 ---
@@ -79,7 +88,10 @@ A high-performance, cross-platform game mod manager and launcher built with Diox
 
 ---
 
-## Getting Started
+## Getting Started (Developers Only)
+
+> [!NOTE]
+> The instructions below are strictly for core contributors and developers working on the codebase. End users should not attempt to build or run these development snapshots.
 
 ### Prerequisites
 - [Rust](https://rustup.rs/) (latest stable)
