@@ -14,11 +14,24 @@ pub struct ModUpdateInfo {
 
 impl AppCore {
     fn resolve_gb_game_id(&self, game_id: &str) -> Result<u64, String> {
+        // 1. Check template.gamebanana_id first
+        if let Ok(templates) = self.game_templates.try_lock() {
+            if let Some(t) = templates
+                .get(game_id)
+                .or_else(|| templates.get(game_id.trim_end_matches(".exe")))
+            {
+                if let Some(id) = t.gamebanana_id {
+                    return Ok(id);
+                }
+            }
+        }
+
+        // 2. Hardcoded fallback mapping
         if let Some(id) = gamebanana::game_id_to_gb_id(game_id) {
             return Ok(id);
         }
 
-        // Try looking up template short_name or name
+        // 3. Try looking up template short_name or name
         if let Ok(templates) = self.game_templates.try_lock() {
             if let Some(t) = templates
                 .get(game_id)

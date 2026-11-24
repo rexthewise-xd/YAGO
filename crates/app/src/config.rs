@@ -13,10 +13,22 @@ pub struct AppConfig {
     pub yago_update_url: String,
     #[serde(default = "default_theme")]
     pub theme: String,
+    #[serde(default = "default_registries")]
+    pub registries: Vec<resources::RegistrySource>,
 }
 
 fn default_theme() -> String {
     "linear".to_string()
+}
+
+pub fn default_registries() -> Vec<resources::RegistrySource> {
+    vec![resources::RegistrySource {
+        id: "official".to_string(),
+        name: "YAGO Official Registry".to_string(),
+        url: "https://raw.githubusercontent.com/rexthewise-xd/yago-registry/main".to_string(),
+        enabled: true,
+        official: true,
+    }]
 }
 
 impl AppConfig {
@@ -49,6 +61,7 @@ impl Default for AppConfig {
             ],
             yago_update_url: "https://api.github.com/repos/rexthewise-xd/YAGO/releases/latest".to_string(),
             theme: "linear".to_string(),
+            registries: default_registries(),
         }
     }
 }

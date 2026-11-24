@@ -15,6 +15,8 @@
   "injection_method_linux": "Proxy",
   "modloader_enabled": true,
   "supported_injection_methods": ["Proxy", "Loader"],
+  "gamebanana_id": 18366,
+  "loader_id": "xxmi-3dmigoto",
   "umu_game_id": "umu-hsr",
   "loader_repo": "SpectrumQT/SRMI-Package",
   "hash_repo": "leotorrez/SR-Model-Importer-Assets",

@@ -251,10 +251,59 @@ impl AppCore {
         Ok(resolved)
     }
 
-    fn load_fix_rules(&self, librarian_assets: &Path, game_id: &str) -> mod_patches::FixRuleSet {
+    pub fn load_fix_rules(
+        &self,
+        librarian_assets: &Path,
+        game_id: &str,
+    ) -> mod_patches::FixRuleSet {
+        let norm = game_id.to_lowercase().replace(".exe", "");
+        let candidates = ["genshin", "zzz", "wuwa", "endfield", "starrail", "hi3"];
+
+        // 1. Check synced app_data_dir/registry/<id>/fixers/<game>.json first
+        if let Ok(config) = self.app_config.try_lock() {
+            for reg in &config.registries {
+                if reg.enabled {
+                    let reg_fixers = self
+                        .app_data_dir
+                        .join("registry")
+                        .join(&reg.id)
+                        .join("fixers");
+                    if reg_fixers.exists() {
+                        let exact_p = reg_fixers.join(format!("{}.json", game_id));
+                        if exact_p.exists() {
+                            if let Ok(content) = std::fs::read_to_string(&exact_p) {
+                                if let Ok(rules) =
+                                    serde_json::from_str::<mod_patches::FixRuleSet>(&content)
+                                {
+                                    return rules;
+                                }
+                            }
+                        }
+                        for candidate in &candidates {
+                            if norm.contains(candidate) {
+                                let p = reg_fixers.join(format!("{}.json", candidate));
+                                if p.exists() {
+                                    if let Ok(content) = std::fs::read_to_string(&p) {
+                                        if let Ok(rules) =
+                                            serde_json::from_str::<mod_patches::FixRuleSet>(
+                                                &content,
+                                            )
+                                        {
+                                            return rules;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Fall back to bundled assets_root/fixers/<game>.json
         let fixers_dir = librarian_assets.join("fixers");
 
-        // 1. Exact match e.g. "genshin.json"
+        // 2a. Exact match e.g. "genshin.json"
         let exact_path = fixers_dir.join(format!("{}.json", game_id));
         if exact_path.exists() {
             if let Ok(content) = std::fs::read_to_string(&exact_path) {
@@ -264,9 +313,8 @@ impl AppCore {
             }
         }
 
-        // 2. Normalized stem e.g. "GenshinImpact.exe" -> "genshin"
-        let norm = game_id.to_lowercase().replace(".exe", "");
-        for candidate in &["genshin", "zzz", "wuwa", "endfield", "starrail"] {
+        // 2b. Normalized stem e.g. "GenshinImpact.exe" -> "genshin"
+        for candidate in &candidates {
             if norm.contains(candidate) {
                 let p = fixers_dir.join(format!("{}.json", candidate));
                 if p.exists() {

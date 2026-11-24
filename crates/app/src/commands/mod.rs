@@ -7,4 +7,5 @@ pub mod launcher;
 pub mod library;
 pub mod mods;
 pub mod profiles;
+pub mod registry;
 pub mod setup;

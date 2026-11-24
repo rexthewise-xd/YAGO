@@ -2,8 +2,93 @@ use crate::{download_file, github};
 use anyhow::{anyhow, Result};
 use ini::ast::{IniDocument, IniItem, Section};
 use ini::IniCompiler;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct EffectRegistrySpec {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub repo: String,
+    #[serde(default)]
+    pub applicable_games: Vec<String>,
+}
+
+impl EffectRegistrySpec {
+    pub fn defaults() -> Vec<Self> {
+        vec![
+            Self {
+                id: "orfix".to_string(),
+                name: "ORFix".to_string(),
+                description: "Object Rendering Fix for Genshin Impact (LeoTools)".to_string(),
+                repo: "leotorrez/LeoTools".to_string(),
+                applicable_games: vec!["genshin".to_string()],
+            },
+            Self {
+                id: "texfx".to_string(),
+                name: "TexFx".to_string(),
+                description: "Advanced texture effects, uncensor, and photosensitivity protection"
+                    .to_string(),
+                repo: "SinsOfSeven/TexFx".to_string(),
+                applicable_games: vec![
+                    "genshin".to_string(),
+                    "hsr".to_string(),
+                    "zzz".to_string(),
+                    "wuwa".to_string(),
+                ],
+            },
+            Self {
+                id: "rabbitfx".to_string(),
+                name: "RabbitFX".to_string(),
+                description:
+                    "Universal visual shader enhancement library for ZZZ, WuWa, and Endfield"
+                        .to_string(),
+                repo: "SilentNightSound/RabbitFX".to_string(),
+                applicable_games: vec![
+                    "zzz".to_string(),
+                    "wuwa".to_string(),
+                    "endfield".to_string(),
+                ],
+            },
+        ]
+    }
+
+    /// Loads effect specifications from registry folders, falling back to built-in defaults.
+    pub fn load_from_registries(registry_root: &Path) -> Vec<Self> {
+        let mut specs = HashMap::new();
+
+        // 1. Default fallback specs
+        for spec in Self::defaults() {
+            specs.insert(spec.id.clone(), spec);
+        }
+
+        // 2. Overlay any synced effects/effects.json
+        if registry_root.exists() {
+            if let Ok(entries) = std::fs::read_dir(registry_root) {
+                for entry in entries.filter_map(|e| e.ok()) {
+                    let path = entry.path().join("effects").join("effects.json");
+                    if path.exists() {
+                        if let Ok(content) = std::fs::read_to_string(&path) {
+                            if let Ok(list) =
+                                serde_json::from_str::<Vec<EffectRegistrySpec>>(&content)
+                            {
+                                for spec in list {
+                                    specs.insert(spec.id.clone(), spec);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut result: Vec<_> = specs.into_values().collect();
+        result.sort_by(|a, b| a.id.cmp(&b.id));
+        result
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum SharedEffectLibrary {

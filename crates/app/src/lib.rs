@@ -40,6 +40,7 @@ pub use mod_patches::{
 pub use reconcile::{reconcile_library, ReconcileReport};
 pub use resources::effects::{EffectLibraryStatus, SharedEffectLibrary, TexFxConfig};
 pub use resources::gamebanana::{GbModDetail, GbModFile, GbModSummary, YagoDeepLink};
+pub use resources::registry::{RegistryEntry, RegistryIndex, RegistrySource, RegistrySyncReport};
 pub use storage::{BundleModEntry, DiscoveredGame, LoadoutBundle, RemoteCatalogEntry, StartMethod};
 
 use include_dir::{include_dir, Dir};

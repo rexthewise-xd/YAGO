@@ -16,6 +16,8 @@
   "modloader_enabled": true,
   "supported_injection_methods": ["Proxy"],
   "start_method": "Shell",
+  "gamebanana_id": 8552,
+  "loader_id": "xxmi-3dmigoto",
   "umu_game_id": "umu-genshin",
   "loader_repo": "SilentNightSound/GIMI-Package",
   "hash_repo": "leotorrez/GI-Model-Importer-Assets",

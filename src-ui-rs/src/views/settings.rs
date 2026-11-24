@@ -731,6 +731,10 @@ fn ReposTab() -> Element {
     let config = (store.app_config)();
     let mut editing = use_signal(|| None::<String>);
     let mut local_val = use_signal(String::new);
+    let mut syncing_registries = use_signal(|| false);
+    let mut show_add_form = use_signal(|| false);
+    let mut new_reg_name = use_signal(String::new);
+    let mut new_reg_url = use_signal(String::new);
 
     let repos = vec![
         (
@@ -750,6 +754,174 @@ fn ReposTab() -> Element {
     let edit_key = (editing)();
 
     rsx! {
+        div { class: "settings-section",
+            div { class: "settings-section-head",
+                div {
+                    h3 { class: "settings-section-title mono", "COMMUNITY REGISTRIES (YAGO-REGISTRY)" }
+                    div { class: "setting-desc", "Synchronize game databases, loaders, shaders, and automated fix rules" }
+                }
+                div { class: "settings-section-actions",
+                    button {
+                        class: "btn btn-sm btn-accent",
+                        disabled: (syncing_registries)(),
+                        onclick: {
+                            let store = store.clone();
+                            move |_| {
+                                let core = store.core.clone();
+                                let mut s = store.clone();
+                                spawn(async move {
+                                    syncing_registries.set(true);
+                                    match core.sync_all_registries().await {
+                                        Ok(reports) => {
+                                            let dl: usize = reports.iter().map(|r| r.downloaded).sum();
+                                            let skip: usize = reports.iter().map(|r| r.skipped_unchanged).sum();
+                                            s.toast(ToastKind::Success, format!("Registries synced: {dl} downloaded, {skip} up-to-date"));
+                                        }
+                                        Err(e) => s.toast(ToastKind::Error, format!("Registry sync failed: {e}")),
+                                    }
+                                    syncing_registries.set(false);
+                                });
+                            }
+                        },
+                        IconSvg { name: IconName::Refresh, size: 14 }
+                        if (syncing_registries)() { "SYNCING…" } else { "SYNC REGISTRIES NOW" }
+                    }
+                    button {
+                        class: "btn btn-sm",
+                        onclick: move |_| {
+                            let cur = (show_add_form)();
+                            show_add_form.set(!cur);
+                        },
+                        IconSvg { name: IconName::Add, size: 14 }
+                        if (show_add_form)() { "CANCEL" } else { "ADD REGISTRY" }
+                    }
+                }
+            }
+
+            if (show_add_form)() {
+                div {
+                    style: "background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px; padding: 14px; margin-bottom: 12px; display: flex; flex-direction: column; gap: 10px;",
+                    div { style: "font-weight: 600; font-size: 13px; color: var(--accent);", "Add Custom Registry Source" }
+                    div { style: "display: flex; gap: 8px; flex-wrap: wrap;",
+                        input {
+                            class: "input",
+                            style: "flex: 1; min-width: 180px;",
+                            r#type: "text",
+                            placeholder: "Registry Name (e.g. My Mod Registry)",
+                            value: "{(new_reg_name)()}",
+                            oninput: move |evt| new_reg_name.set(evt.value()),
+                        }
+                        input {
+                            class: "input mono",
+                            style: "flex: 2; min-width: 260px;",
+                            r#type: "text",
+                            placeholder: "Base URL (https://... or file:///path/to/registry)",
+                            value: "{(new_reg_url)()}",
+                            oninput: move |evt| new_reg_url.set(evt.value()),
+                        }
+                        button {
+                            class: "btn btn-accent",
+                            onclick: {
+                                let store = store.clone();
+                                move |_| {
+                                    let name = (new_reg_name)();
+                                    let url = (new_reg_url)();
+                                    let core = store.core.clone();
+                                    let mut s = store.clone();
+                                    spawn(async move {
+                                        match core.add_registry(name, url).await {
+                                            Ok(reg) => {
+                                                s.toast(ToastKind::Success, format!("Added registry '{}'", reg.name));
+                                                new_reg_name.set(String::new());
+                                                new_reg_url.set(String::new());
+                                                show_add_form.set(false);
+                                            }
+                                            Err(e) => s.toast(ToastKind::Error, e),
+                                        }
+                                    });
+                                }
+                            },
+                            IconSvg { name: IconName::Check, size: 14 }
+                            "SAVE"
+                        }
+                    }
+                }
+            }
+
+            for reg in config.registries.iter() {
+                {
+                    let reg_id = reg.id.clone();
+                    let is_official = reg.official;
+                    let is_enabled = reg.enabled;
+                    rsx! {
+                        div {
+                            key: "{reg.id}",
+                            class: "setting-row",
+                            div { class: "setting-row-left",
+                                div { class: "setting-icon",
+                                    IconSvg { name: if is_official { IconName::Shield } else { IconName::Grid }, size: 18 }
+                                }
+                                div {
+                                    div { style: "display: flex; align-items: center; gap: 8px;",
+                                        span { class: "setting-label", "{reg.name}" }
+                                        if is_official {
+                                            span { class: "char-badge accent", "OFFICIAL" }
+                                        } else {
+                                            span { class: "tag mono", "3RD-PARTY" }
+                                        }
+                                    }
+                                    div { class: "setting-desc mono", "{reg.url}" }
+                                }
+                            }
+                            div { style: "display: flex; align-items: center; gap: 12px;",
+                                if !is_official {
+                                    button {
+                                        class: "btn-link danger",
+                                        title: "Remove custom registry",
+                                        onclick: {
+                                            let store = store.clone();
+                                            let rid = reg_id.clone();
+                                            move |_| {
+                                                let core = store.core.clone();
+                                                let rid = rid.clone();
+                                                let mut s = store.clone();
+                                                spawn(async move {
+                                                    match core.remove_registry(rid).await {
+                                                        Ok(_) => s.toast(ToastKind::Success, "Registry removed"),
+                                                        Err(e) => s.toast(ToastKind::Error, e),
+                                                    }
+                                                });
+                                            }
+                                        },
+                                        "REMOVE"
+                                    }
+                                }
+                                button {
+                                    class: if is_enabled { "toggle-switch on" } else { "toggle-switch" },
+                                    title: if is_enabled { "Disable registry" } else { "Enable registry" },
+                                    onclick: {
+                                        let store = store.clone();
+                                        let rid = reg_id.clone();
+                                        move |_| {
+                                            let core = store.core.clone();
+                                            let rid = rid.clone();
+                                            let mut s = store.clone();
+                                            spawn(async move {
+                                                if let Err(e) = core.toggle_registry(rid, !is_enabled).await {
+                                                    s.toast(ToastKind::Error, e);
+                                                }
+                                            });
+                                        }
+                                    },
+                                    div { class: "toggle-knob" }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         div { class: "settings-section",
             h3 { class: "settings-section-title mono", "REPOSITORY CONFIGURATION" }
 

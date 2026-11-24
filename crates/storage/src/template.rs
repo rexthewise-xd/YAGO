@@ -32,6 +32,10 @@ pub struct GameTemplate {
 
     // External Resources
     #[serde(default)]
+    pub gamebanana_id: Option<u64>,
+    #[serde(default)]
+    pub loader_id: Option<String>,
+    #[serde(default)]
     pub loader_repo: Option<String>, // e.g., "SpectrumQT/WWMI-Package"
 
     #[serde(default, alias = "hash_repo")]

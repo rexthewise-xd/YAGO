@@ -16,6 +16,7 @@
   "injection_method_linux": "Proxy",
   "modloader_enabled": true,
   "supported_injection_methods": ["Proxy"],
+  "loader_id": "xxmi-3dmigoto",
   "loader_repo": "SpectrumQT/EFMI-Package",
   "hash_db_url": "https://raw.githubusercontent.com/SpectrumQT/EFMI-Package/main/Tools/hashes.json",
   "patch_logic": {},

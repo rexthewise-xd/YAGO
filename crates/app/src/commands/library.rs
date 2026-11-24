@@ -762,9 +762,7 @@ impl AppCore {
         if !templates_root.exists() {
             std::fs::create_dir_all(&templates_root).map_err(|e| e.to_string())?;
         }
-        let registry = storage::TemplateRegistry::new(templates_root);
-        let new_templates = registry.load_all().await.map_err(|e| e.to_string())?;
-
+        let new_templates = self.load_all_templates().await;
         *self.game_templates.lock().await = new_templates;
 
         let ids: Vec<String> = self.game_dbs.lock().await.keys().cloned().collect();

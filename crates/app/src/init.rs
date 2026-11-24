@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use storage::{GlobalSettings, Librarian, SettingsManager, TemplateRegistry};
+use storage::{GlobalSettings, Librarian, SettingsManager};
 use tokio::sync::Mutex;
 
 use crate::config::AppConfig;
@@ -180,10 +180,8 @@ pub async fn init_with_dir(app_data_dir: PathBuf) -> anyhow::Result<AppCore> {
             ));
         }
 
-        let registry = TemplateRegistry::new(bg.librarian.lock().await.templates_root.clone());
-        if let Ok(templates) = registry.load_all().await {
-            *bg.game_templates.lock().await = templates;
-        }
+        let templates = bg.load_all_templates().await;
+        *bg.game_templates.lock().await = templates;
 
         let ids = bg.librarian.lock().await.discover_game_ids().await;
         if let Ok(ids) = ids {

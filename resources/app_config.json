@@ -15,5 +15,14 @@
     "https://picsum.photos/seed/wuwa-landscape/1920/1080",
     "https://picsum.photos/seed/fantasy-landscape/1920/1080"
   ],
-  "theme": "linear"
+  "theme": "linear",
+  "registries": [
+    {
+      "id": "official",
+      "name": "YAGO Official Registry",
+      "url": "https://raw.githubusercontent.com/rexthewise-xd/yago-registry/main",
+      "enabled": true,
+      "official": true
+    }
+  ]
 }

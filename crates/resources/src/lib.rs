@@ -4,18 +4,23 @@ pub mod gamebanana;
 pub mod github;
 pub mod loader;
 pub mod proton;
+pub mod registry;
 pub mod reshade;
 
 pub use assets::AssetCache;
 pub use effects::{
     detect_duplicate_effects, install_or_update_effect, read_texfx_config, write_texfx_config,
-    EffectLibraryStatus, SharedEffectLibrary, TexFxConfig,
+    EffectLibraryStatus, EffectRegistrySpec, SharedEffectLibrary, TexFxConfig,
 };
 pub use gamebanana::{
     game_id_to_gb_id, get_mod_detail, parse_yago_uri, search_mods, GbModDetail, GbModFile,
     GbModSummary, YagoDeepLink,
 };
-pub use proton::ProtonSource;
+pub use proton::{ProtonSource, RunnerSourceSpec};
+pub use registry::{
+    compute_sha256, fetch_bytes, sync_registry, RegistryEntry, RegistryIndex, RegistrySource,
+    RegistrySyncReport,
+};
 
 use anyhow::{anyhow, Result};
 use futures_util::StreamExt;

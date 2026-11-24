@@ -1,8 +1,91 @@
 use crate::download_file;
 use crate::github;
 use anyhow::{anyhow, Result};
+use std::collections::HashMap;
 use std::path::Path;
 use vfs::archive::extract_targz;
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RunnerSourceSpec {
+    pub id: String,
+    pub name: String,
+    pub owner: String,
+    pub repo: String,
+    #[serde(default)]
+    pub archive_exts: Vec<String>,
+}
+
+impl RunnerSourceSpec {
+    pub fn defaults() -> Vec<Self> {
+        vec![
+            Self {
+                id: "ge-proton".to_string(),
+                name: "GE-Proton".to_string(),
+                owner: "GloriousEggroll".to_string(),
+                repo: "proton-ge-custom".to_string(),
+                archive_exts: vec![
+                    ".tar.gz".to_string(),
+                    ".tar.xz".to_string(),
+                    ".tar.zst".to_string(),
+                ],
+            },
+            Self {
+                id: "proton-cachyos".to_string(),
+                name: "Proton-CachyOS".to_string(),
+                owner: "CachyOS".to_string(),
+                repo: "proton-cachyos".to_string(),
+                archive_exts: vec![
+                    ".tar.gz".to_string(),
+                    ".tar.xz".to_string(),
+                    ".tar.zst".to_string(),
+                ],
+            },
+            Self {
+                id: "dw-proton".to_string(),
+                name: "DW-Proton".to_string(),
+                owner: "Dawn-Wings".to_string(),
+                repo: "DW-Proton".to_string(),
+                archive_exts: vec![
+                    ".tar.gz".to_string(),
+                    ".tar.xz".to_string(),
+                    ".tar.zst".to_string(),
+                ],
+            },
+        ]
+    }
+
+    /// Loads runner source specifications from registry folders, falling back to built-in defaults.
+    pub fn load_from_registries(registry_root: &Path) -> Vec<Self> {
+        let mut specs = HashMap::new();
+
+        for spec in Self::defaults() {
+            specs.insert(spec.id.clone(), spec);
+        }
+
+        if registry_root.exists() {
+            if let Ok(entries) = std::fs::read_dir(registry_root) {
+                for entry in entries.filter_map(|e| e.ok()) {
+                    let path = entry.path().join("runners").join("proton-sources.json");
+                    if path.exists() {
+                        if let Ok(content) = std::fs::read_to_string(&path) {
+                            if let Ok(list) =
+                                serde_json::from_str::<Vec<RunnerSourceSpec>>(&content)
+                            {
+                                for spec in list {
+                                    specs.insert(spec.id.clone(), spec);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut result: Vec<_> = specs.into_values().collect();
+        result.sort_by(|a, b| a.id.cmp(&b.id));
+        result
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ProtonSource {
