@@ -76,6 +76,20 @@ fn resource_lib(name: &str) -> Option<PathBuf> {
 }
 
 impl AppCore {
+    pub async fn resolve_loader_spec(&self, game_id: &str) -> loader::LoaderSpec {
+        let loader_id = {
+            let templates = self.game_templates.lock().await;
+            templates
+                .get(game_id)
+                .or_else(|| templates.get(game_id.trim_end_matches(".exe")))
+                .and_then(|t| t.loader_id.clone())
+                .unwrap_or_else(|| "xxmi-3dmigoto".to_string())
+        };
+
+        let registry_root = self.app_data_dir.join("registry");
+        loader::LoaderSpec::load_from_registries(&registry_root, &loader_id)
+    }
+
     pub async fn trigger_panic(&self) -> Result<(), String> {
         Emergency::trigger(self).await;
         Ok(())
@@ -119,141 +133,243 @@ impl AppCore {
         let p_uuid = Uuid::parse_str(&config.active_profile_id).map_err(|e| e.to_string())?;
         let profile = db.profiles.get(&p_uuid).ok_or("Profile missing")?;
 
+        let spec = self.resolve_loader_spec(&game_id).await;
+
         if !config.modloader_enabled {
             if !profile.use_reshade {
-                let _ = LoaderContext::uninstall_loader(
+                let _ = LoaderContext::uninstall_loader_with_spec(
                     &game_root,
                     config.prefix_path.as_deref(),
                     true,
                     config.unsafe_mode,
+                    &spec,
                 )
                 .await;
             }
             return Ok(ConflictReport::default());
         }
 
-        let suppress_global = self.global_settings.lock().await.suppress_creditinfo_global;
+        let (mut plan, report) = match spec.strategy {
+            loader::DeployStrategy::IniAst3dMigoto => {
+                let suppress_global = self.global_settings.lock().await.suppress_creditinfo_global;
 
-        let mut profiles_for_weaver = Vec::new();
-        let mut add_to_list = |mod_id: &Uuid| {
-            if let Some(record) = db.mods.get(mod_id) {
-                if !record.path.exists() {
-                    return;
-                }
-                let mut ini_paths = Vec::new();
-                for entry in walkdir::WalkDir::new(&record.path)
-                    .max_depth(3)
-                    .into_iter()
-                    .filter_map(|e| e.ok())
-                {
-                    let path = entry.path();
-                    let name_str = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-                    let is_ini = path
-                        .extension()
-                        .and_then(|s| s.to_str())
-                        .map(|s| s.to_lowercase())
-                        == Some("ini".to_string());
-                    let is_source = name_str.to_lowercase().ends_with(".ini.yago_source");
+                let mut profiles_for_weaver = Vec::new();
+                let mut add_to_list = |mod_id: &Uuid| {
+                    if let Some(record) = db.mods.get(mod_id) {
+                        if !record.path.exists() {
+                            return;
+                        }
+                        let mut ini_paths = Vec::new();
+                        for entry in walkdir::WalkDir::new(&record.path)
+                            .max_depth(3)
+                            .into_iter()
+                            .filter_map(|e| e.ok())
+                        {
+                            let path = entry.path();
+                            let name_str = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+                            let is_ini = path
+                                .extension()
+                                .and_then(|s| s.to_str())
+                                .map(|s| s.to_lowercase())
+                                == Some("ini".to_string());
+                            let is_source = name_str.to_lowercase().ends_with(".ini.yago_source");
 
-                    if path.is_file() && (is_ini || is_source) {
-                        ini_paths.push(entry.path().to_path_buf());
+                            if path.is_file() && (is_ini || is_source) {
+                                ini_paths.push(entry.path().to_path_buf());
+                            }
+                        }
+
+                        let mod_type = record.config.mod_type.clone().unwrap_or_else(|| {
+                            if record.compatibility.character != "Unknown"
+                                && record.compatibility.character != "Global/Other"
+                            {
+                                "character".to_string()
+                            } else {
+                                "global".to_string()
+                            }
+                        });
+
+                        let active_preset_vars =
+                            record.config.active_preset_id.as_ref().and_then(|pid| {
+                                if pid == "default" {
+                                    Some(
+                                        mod_patches::extract_default_preset(&record.path).variables,
+                                    )
+                                } else {
+                                    record
+                                        .config
+                                        .variant_presets
+                                        .iter()
+                                        .find(|p| p.id == *pid)
+                                        .map(|p| p.variables.clone())
+                                }
+                            });
+
+                        let suppress_creditinfo =
+                            record.config.suppress_creditinfo || suppress_global;
+
+                        profiles_for_weaver.push(mod_patches::ModProfile {
+                            uuid: record.id.to_string(),
+                            mod_root: record.path.clone(),
+                            ini_paths,
+                            deploy_path: "".to_string(),
+                            character: record.compatibility.character.clone(),
+                            mod_type,
+                            nsfw: record
+                                .config
+                                .tags
+                                .iter()
+                                .any(|t| t.to_lowercase() == "nsfw"),
+                            tags: record.config.tags.clone(),
+                            active_preset_vars,
+                            ini_anchors: record.config.ini_anchors.clone(),
+                            suppress_creditinfo,
+                            context_pool: record.config.context_pool.clone(),
+                        });
+                    }
+                };
+                for mid in &profile.load_order {
+                    if profile.enabled_mod_ids.contains(mid) {
+                        add_to_list(mid);
                     }
                 }
-
-                let mod_type = record.config.mod_type.clone().unwrap_or_else(|| {
-                    if record.compatibility.character != "Unknown"
-                        && record.compatibility.character != "Global/Other"
-                    {
-                        "character".to_string()
-                    } else {
-                        "global".to_string()
+                for mid in db.mods.keys() {
+                    if !profile.load_order.contains(mid) && profile.enabled_mod_ids.contains(mid) {
+                        add_to_list(mid);
                     }
-                });
+                }
+                let compile_options = mod_patches::CompileOptions {
+                    enable_sfw_toggle: profile.enable_sfw_toggle,
+                    sfw_toggle_key: profile
+                        .sfw_toggle_key
+                        .clone()
+                        .unwrap_or_else(|| "F9".to_string()),
+                    enable_context_swaps: profile.enable_context_swaps,
+                };
 
-                let active_preset_vars = record.config.active_preset_id.as_ref().and_then(|pid| {
-                    if pid == "default" {
-                        Some(mod_patches::extract_default_preset(&record.path).variables)
-                    } else {
-                        record
-                            .config
-                            .variant_presets
-                            .iter()
-                            .find(|p| p.id == *pid)
-                            .map(|p| p.variables.clone())
+                mod_patches::generate_deployment_plan_with_options(
+                    profiles_for_weaver,
+                    compile_options,
+                )
+                .map_err(|e| e.to_string())?
+            }
+            loader::DeployStrategy::VfsDirect | loader::DeployStrategy::Scripted => {
+                let mut direct_plan = vfs::DeploymentPlan {
+                    symlink_map: Vec::new(),
+                    generated_files: Vec::new(),
+                    state_hash: String::new(),
+                };
+                let mut add_direct = |mid: &Uuid| {
+                    if let Some(record) = db.mods.get(mid) {
+                        if record.path.exists() {
+                            let folder_name = record
+                                .path
+                                .file_name()
+                                .map(|s| s.to_string_lossy().to_string())
+                                .unwrap_or_else(|| mid.to_string());
+                            direct_plan
+                                .symlink_map
+                                .push((record.path.clone(), PathBuf::from(folder_name)));
+                        }
                     }
-                });
-
-                let suppress_creditinfo = record.config.suppress_creditinfo || suppress_global;
-
-                profiles_for_weaver.push(mod_patches::ModProfile {
-                    uuid: record.id.to_string(),
-                    mod_root: record.path.clone(),
-                    ini_paths,
-                    deploy_path: "".to_string(),
-                    character: record.compatibility.character.clone(),
-                    mod_type,
-                    nsfw: record
-                        .config
-                        .tags
-                        .iter()
-                        .any(|t| t.to_lowercase() == "nsfw"),
-                    tags: record.config.tags.clone(),
-                    active_preset_vars,
-                    ini_anchors: record.config.ini_anchors.clone(),
-                    suppress_creditinfo,
-                    context_pool: record.config.context_pool.clone(),
-                });
+                };
+                for mid in &profile.load_order {
+                    if profile.enabled_mod_ids.contains(mid) {
+                        add_direct(mid);
+                    }
+                }
+                for mid in db.mods.keys() {
+                    if !profile.load_order.contains(mid) && profile.enabled_mod_ids.contains(mid) {
+                        add_direct(mid);
+                    }
+                }
+                (direct_plan, ConflictReport::default())
+            }
+            loader::DeployStrategy::PakMerge => {
+                let mut pak_plan = vfs::DeploymentPlan {
+                    symlink_map: Vec::new(),
+                    generated_files: Vec::new(),
+                    state_hash: String::new(),
+                };
+                let mut add_paks = |mid: &Uuid| {
+                    if let Some(record) = db.mods.get(mid) {
+                        if record.path.exists() {
+                            let mut found_paks = false;
+                            for entry in walkdir::WalkDir::new(&record.path)
+                                .max_depth(3)
+                                .into_iter()
+                                .filter_map(|e| e.ok())
+                            {
+                                let p = entry.path();
+                                if p.is_file() {
+                                    if let Some(ext) = p
+                                        .extension()
+                                        .and_then(|s| s.to_str())
+                                        .map(|s| s.to_lowercase())
+                                    {
+                                        if ext == "pak" || ext == "ucas" || ext == "utoc" {
+                                            found_paks = true;
+                                            let fname = p.file_name().unwrap();
+                                            pak_plan
+                                                .symlink_map
+                                                .push((p.to_path_buf(), PathBuf::from(fname)));
+                                        }
+                                    }
+                                }
+                            }
+                            if !found_paks {
+                                let folder_name = record
+                                    .path
+                                    .file_name()
+                                    .map(|s| s.to_string_lossy().to_string())
+                                    .unwrap_or_else(|| mid.to_string());
+                                pak_plan
+                                    .symlink_map
+                                    .push((record.path.clone(), PathBuf::from(folder_name)));
+                            }
+                        }
+                    }
+                };
+                for mid in &profile.load_order {
+                    if profile.enabled_mod_ids.contains(mid) {
+                        add_paks(mid);
+                    }
+                }
+                for mid in db.mods.keys() {
+                    if !profile.load_order.contains(mid) && profile.enabled_mod_ids.contains(mid) {
+                        add_paks(mid);
+                    }
+                }
+                (pak_plan, ConflictReport::default())
             }
         };
-        for mid in &profile.load_order {
-            if profile.enabled_mod_ids.contains(mid) {
-                add_to_list(mid);
-            }
-        }
-        for mid in db.mods.keys() {
-            if !profile.load_order.contains(mid) && profile.enabled_mod_ids.contains(mid) {
-                add_to_list(mid);
-            }
-        }
-        let compile_options = mod_patches::CompileOptions {
-            enable_sfw_toggle: profile.enable_sfw_toggle,
-            sfw_toggle_key: profile
-                .sfw_toggle_key
-                .clone()
-                .unwrap_or_else(|| "F9".to_string()),
-            enable_context_swaps: profile.enable_context_swaps,
-        };
-
-        let (mut plan, report) = mod_patches::generate_deployment_plan_with_options(
-            profiles_for_weaver,
-            compile_options,
-        )
-        .map_err(|e| e.to_string())?;
 
         let lib_guard = self.librarian.lock().await;
         let paths = lib_guard.game_paths(&game_id);
         let loaders_root = lib_guard.loaders_root.clone();
 
         // Include enabled and installed shared effect libraries in the deployment plan
-        for eff_id in &config.enabled_effects {
-            let effect_dir = lib_guard.assets_root.join("effects").join(eff_id);
-            if effect_dir.exists() {
-                let target_rel = PathBuf::from("00_Configs").join("Effects").join(eff_id);
-                plan.symlink_map.push((effect_dir, target_rel));
+        if spec.strategy == loader::DeployStrategy::IniAst3dMigoto {
+            for eff_id in &config.enabled_effects {
+                let effect_dir = lib_guard.assets_root.join("effects").join(eff_id);
+                if effect_dir.exists() {
+                    let target_rel = PathBuf::from("00_Configs").join("Effects").join(eff_id);
+                    plan.symlink_map.push((effect_dir, target_rel));
+                }
             }
-        }
 
-        // Bridge gui_collect auto_generated.ini if configured and exists
-        if let Some(gui_path) = &config.gui_collect_ini {
-            if gui_path.exists() {
-                let bridge_content = format!(
-                    "; YAGO gui_collect Bridge\ninclude = {}\n",
-                    gui_path.display()
-                );
-                plan.generated_files.push((
-                    PathBuf::from("00_Configs/yago_gui_collect_bridge.ini"),
-                    bridge_content,
-                ));
+            // Bridge gui_collect auto_generated.ini if configured and exists
+            if let Some(gui_path) = &config.gui_collect_ini {
+                if gui_path.exists() {
+                    let bridge_content = format!(
+                        "; YAGO gui_collect Bridge\ninclude = {}\n",
+                        gui_path.display()
+                    );
+                    plan.generated_files.push((
+                        PathBuf::from("00_Configs/yago_gui_collect_bridge.ini"),
+                        bridge_content,
+                    ));
+                }
             }
         }
 
@@ -262,13 +378,14 @@ impl AppCore {
             std::fs::create_dir_all(profile_dir).map_err(|e| e.to_string())?;
         }
 
-        vfs::execute_deployment(profile_dir, &plan, Some("Mods"), force)
+        vfs::execute_deployment(profile_dir, &plan, Some(&spec.mods_target_dir), force)
             .map_err(|e| e.to_string())?;
 
-        let game_mods_dir = game_root.join("Mods");
+        let game_mods_dir = game_root.join(&spec.mods_target_dir);
         let is_proxy = config.injection_method == storage::InjectionMethod::Proxy
             || (cfg!(target_os = "linux")
-                && config.injection_method == storage::InjectionMethod::Loader);
+                && config.injection_method == storage::InjectionMethod::Loader)
+            || spec.strategy != loader::DeployStrategy::IniAst3dMigoto;
 
         if is_proxy {
             vfs::make_symlink(&paths.profile_mods, &game_mods_dir).map_err(|e| e.to_string())?;
@@ -280,36 +397,39 @@ impl AppCore {
         }
 
         // Link ShaderFixes for enabled mods and cleanup stale symlinks for disabled mods
-        let active_shader_fixes_dir = game_root.join("ShaderFixes");
-        let has_any_shaders = db.mods.values().any(|m| !m.config.shader_files.is_empty());
-        if active_shader_fixes_dir.exists() || has_any_shaders {
-            let _ = std::fs::create_dir_all(&active_shader_fixes_dir);
-            let mut active_shader_names = std::collections::HashSet::new();
+        if let Some(sf_name) = &spec.shader_fixes_dir {
+            let active_shader_fixes_dir = game_root.join(sf_name);
+            let has_any_shaders = db.mods.values().any(|m| !m.config.shader_files.is_empty());
+            if active_shader_fixes_dir.exists() || has_any_shaders {
+                let _ = std::fs::create_dir_all(&active_shader_fixes_dir);
+                let mut active_shader_names = std::collections::HashSet::new();
 
-            for mid in &profile.enabled_mod_ids {
-                if let Some(record) = db.mods.get(mid) {
-                    for rel_shader in &record.config.shader_files {
-                        let src_path = record.path.join(rel_shader);
-                        if src_path.exists() {
-                            if let Some(file_name) = Path::new(rel_shader).file_name() {
-                                let dest_path = active_shader_fixes_dir.join(file_name);
-                                active_shader_names.insert(file_name.to_string_lossy().to_string());
-                                let _ = vfs::make_symlink(&src_path, &dest_path);
+                for mid in &profile.enabled_mod_ids {
+                    if let Some(record) = db.mods.get(mid) {
+                        for rel_shader in &record.config.shader_files {
+                            let src_path = record.path.join(rel_shader);
+                            if src_path.exists() {
+                                if let Some(file_name) = Path::new(rel_shader).file_name() {
+                                    let dest_path = active_shader_fixes_dir.join(file_name);
+                                    active_shader_names
+                                        .insert(file_name.to_string_lossy().to_string());
+                                    let _ = vfs::make_symlink(&src_path, &dest_path);
+                                }
                             }
                         }
                     }
                 }
-            }
 
-            for (mid, record) in &db.mods {
-                if !profile.enabled_mod_ids.contains(mid) {
-                    for rel_shader in &record.config.shader_files {
-                        if let Some(file_name) = Path::new(rel_shader).file_name() {
-                            let name_str = file_name.to_string_lossy().to_string();
-                            if !active_shader_names.contains(&name_str) {
-                                let stale_path = active_shader_fixes_dir.join(file_name);
-                                if stale_path.exists() {
-                                    let _ = std::fs::remove_file(stale_path);
+                for (mid, record) in &db.mods {
+                    if !profile.enabled_mod_ids.contains(mid) {
+                        for rel_shader in &record.config.shader_files {
+                            if let Some(file_name) = Path::new(rel_shader).file_name() {
+                                let name_str = file_name.to_string_lossy().to_string();
+                                if !active_shader_names.contains(&name_str) {
+                                    let stale_path = active_shader_fixes_dir.join(file_name);
+                                    if stale_path.exists() {
+                                        let _ = std::fs::remove_file(stale_path);
+                                    }
                                 }
                             }
                         }
@@ -318,35 +438,37 @@ impl AppCore {
             }
         }
 
-        let target_ini = if !is_proxy {
-            loaders_root.join("d3dx.ini")
-        } else {
-            game_root.join("d3dx.ini")
-        };
-        if target_ini.exists() {
-            <IniDocument as IniPatcher>::patch_file(&target_ini, "Loader", "target", exe_name)
-                .map_err(|e| e.to_string())?;
-            if let Some(patches) = &config.patch_logic {
-                <IniDocument as IniPatcher>::patch_config(&target_ini, patches)
-                    .map_err(|e| e.to_string())?;
+        if let Some(cfg_file) = &spec.config_file {
+            let target_ini = if !is_proxy {
+                loaders_root.join(cfg_file)
             } else {
-                let guard = self.game_templates.lock().await;
-                if let Some(t) = guard.get(&game_id) {
-                    if let Some(p) = &t.patch_logic {
-                        <IniDocument as IniPatcher>::patch_config(&target_ini, p)
-                            .map_err(|e| e.to_string())?;
+                game_root.join(cfg_file)
+            };
+            if target_ini.exists() {
+                <IniDocument as IniPatcher>::patch_file(&target_ini, "Loader", "target", exe_name)
+                    .map_err(|e| e.to_string())?;
+                if let Some(patches) = &config.patch_logic {
+                    <IniDocument as IniPatcher>::patch_config(&target_ini, patches)
+                        .map_err(|e| e.to_string())?;
+                } else {
+                    let guard = self.game_templates.lock().await;
+                    if let Some(t) = guard.get(&game_id) {
+                        if let Some(p) = &t.patch_logic {
+                            <IniDocument as IniPatcher>::patch_config(&target_ini, p)
+                                .map_err(|e| e.to_string())?;
+                        }
                     }
                 }
-            }
 
-            // Patch hunting mode
-            let hunting_val = if config.hunting_mode { "2" } else { "0" };
-            let _ = <IniDocument as IniPatcher>::patch_file(
-                &target_ini,
-                "Hunting",
-                "hunting",
-                hunting_val,
-            );
+                // Patch hunting mode
+                let hunting_val = if config.hunting_mode { "2" } else { "0" };
+                let _ = <IniDocument as IniPatcher>::patch_file(
+                    &target_ini,
+                    "Hunting",
+                    "hunting",
+                    hunting_val,
+                );
+            }
         }
         self.emit(AppEvent::TaskCompleted("Deployment successful".to_string()));
         Ok(report)
@@ -354,9 +476,19 @@ impl AppCore {
 }
 impl AppCore {
     pub async fn redeploy_mods(&self, game_path: String) -> Result<(), String> {
-        self.deploy_mods(game_path, true).await?;
+        self.deploy_mods(game_path.clone(), true).await?;
 
-        launcher::input::send_reload_f10().map_err(|e| format!("Failed to send F10: {}", e))?;
+        let exe_path = PathBuf::from(&game_path);
+        let exe_name = exe_path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or_default();
+        let game_id = exe_name.to_lowercase();
+        let spec = self.resolve_loader_spec(&game_id).await;
+
+        if spec.reload_key.as_deref() == Some("F10") || spec.reload_key.is_none() {
+            let _ = launcher::input::send_reload_f10();
+        }
 
         self.emit(AppEvent::TaskCompleted("Hot Reload successful".to_string()));
         Ok(())
@@ -607,6 +739,8 @@ impl AppCore {
             let (runner_path, runner_type) =
                 resolve_runner_path(rid_opt, &self.app_data_dir, &settings).await;
 
+            let spec = self.resolve_loader_spec(&game_id).await;
+
             let final_args = if profile.launch_args.is_empty() {
                 vec![
                     "-popupwindow".into(),
@@ -666,10 +800,17 @@ impl AppCore {
                 lsfg_vk: profile.lsfg_vk,
                 pre_launch_cmd: config_pre_launch_cmd.clone(),
                 post_exit_cmd: config_post_exit_cmd.clone(),
+                dll_overrides: spec.dll_overrides.clone(),
             };
             if method == launcher::InjectionMethod::Loader {
-                let _ = LoaderContext::uninstall_loader(&game_dir, None, false, config_unsafe_mode)
-                    .await;
+                let _ = LoaderContext::uninstall_loader_with_spec(
+                    &game_dir,
+                    None,
+                    false,
+                    config_unsafe_mode,
+                    &spec,
+                )
+                .await;
             }
             #[cfg(target_os = "linux")]
             {
@@ -693,6 +834,7 @@ impl AppCore {
                         injection_method: Some("Proxy".to_string()),
                         unsafe_mode: config_unsafe_mode,
                         use_rabbit_wrapper: config_use_rabbit,
+                        loader_spec: Some(spec.clone()),
                     },
                 )
                 .await
@@ -708,6 +850,7 @@ impl AppCore {
                         injection_method: Some("ReShadeOnly".to_string()),
                         unsafe_mode: config_unsafe_mode,
                         use_rabbit_wrapper: config_use_rabbit,
+                        loader_spec: Some(spec.clone()),
                     },
                 )
                 .await
@@ -750,11 +893,12 @@ impl AppCore {
                         core.emit_library().await;
 
                         if method == launcher::InjectionMethod::Proxy {
-                            let _ = LoaderContext::uninstall_loader(
+                            let _ = LoaderContext::uninstall_loader_with_spec(
                                 &game_dir,
                                 Some(&prefix_path),
                                 profile.use_reshade,
                                 config_unsafe_mode,
+                                &spec,
                             )
                             .await;
                             let _ = std::fs::remove_file(game_dir.join(".yago_session_lock"));

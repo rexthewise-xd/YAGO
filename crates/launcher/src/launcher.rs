@@ -76,6 +76,7 @@ pub struct LaunchOptions {
     pub lsfg_vk: bool,
     pub pre_launch_cmd: Option<String>,
     pub post_exit_cmd: Option<String>,
+    pub dll_overrides: Option<String>,
 }
 
 use crate::SandboxManager;
@@ -497,7 +498,11 @@ impl Launcher {
             if !matches!(options.runner.runner_type, RunnerType::Native) {
                 match options.injection_method {
                     InjectionMethod::Proxy | InjectionMethod::Loader => {
-                        cmd.env("WINEDLLOVERRIDES", "d3d11,dxgi,d3dcompiler_47=n,b");
+                        let ov = options
+                            .dll_overrides
+                            .as_deref()
+                            .unwrap_or("d3d11,dxgi,d3dcompiler_47=n,b");
+                        cmd.env("WINEDLLOVERRIDES", ov);
                     }
                     _ => {}
                 }
@@ -658,6 +663,7 @@ mod tests {
             lsfg_vk: true,
             pre_launch_cmd: None,
             post_exit_cmd: None,
+            dll_overrides: None,
         };
 
         let launcher = Launcher;

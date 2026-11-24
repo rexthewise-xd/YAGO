@@ -1,4 +1,5 @@
 use crate::error::{LoaderError, Result};
+use crate::spec::LoaderSpec;
 use ini::{IniDocument, IniPatcher};
 use std::path::Path;
 
@@ -11,6 +12,7 @@ pub struct InstallOptions {
     pub injection_method: Option<String>, // "Proxy" or "Loader"
     pub unsafe_mode: bool,
     pub use_rabbit_wrapper: bool,
+    pub loader_spec: Option<LoaderSpec>,
 }
 
 impl LoaderContext {
@@ -21,6 +23,10 @@ impl LoaderContext {
     ) -> Result<()> {
         let game_lib = library_root.join(&options.game_id);
         let method = options.injection_method.as_deref().unwrap_or("Proxy");
+        let spec = options
+            .loader_spec
+            .clone()
+            .unwrap_or_else(LoaderSpec::default_xxmi);
 
         if method == "ReShadeOnly" {
             // ReShade Only Strategy:
@@ -61,7 +67,14 @@ impl LoaderContext {
 
         // 1. Base Loader
         if method == "Proxy" {
-            Self::install_proxy(game_dir, &game_lib, &options.game_id, options.unsafe_mode).await?;
+            Self::install_proxy_with_spec(
+                game_dir,
+                &game_lib,
+                &options.game_id,
+                options.unsafe_mode,
+                &spec,
+            )
+            .await?;
         } else if method == "Loader" {
             // In Loader mode, we don't copy the proxy DLLs to game root.
             // But we might need to ensure the loader folder itself is ready (handled by quartermaster/download_loader)
@@ -69,10 +82,11 @@ impl LoaderContext {
         }
 
         // Determine ini path: Proxy -> GameDir/d3dx.ini, Loader -> Library/Game/d3dx.ini ?
+        let cfg_file = spec.config_file.as_deref().unwrap_or("d3dx.ini");
         let ini_path = if method == "Loader" {
-            game_lib.join("d3dx.ini")
+            game_lib.join(cfg_file)
         } else {
-            game_dir.join("d3dx.ini")
+            game_dir.join(cfg_file)
         };
 
         // 2. ReShade / Chaining
@@ -161,60 +175,66 @@ impl LoaderContext {
         Ok(())
     }
 
-    /// Installs the loader as a Proxy (using d3d11.dll hijacking).
+    /// Installs the loader as a Proxy using the default XXMI / 3DMigoto spec.
     pub async fn install_proxy(
         game_dir: &Path,
         loader_source: &Path,
         game_exe: &str,
         unsafe_mode: bool,
     ) -> Result<()> {
-        let source_dll = loader_source.join("d3d11.dll");
-        if !source_dll.exists() {
-            return Err(LoaderError::NotFound(format!(
-                "d3d11.dll not found in {:?}",
-                loader_source
-            )));
+        let spec = LoaderSpec::default_xxmi();
+        Self::install_proxy_with_spec(game_dir, loader_source, game_exe, unsafe_mode, &spec).await
+    }
+
+    /// Installs the loader as a Proxy according to the given LoaderSpec.
+    pub async fn install_proxy_with_spec(
+        game_dir: &Path,
+        loader_source: &Path,
+        game_exe: &str,
+        unsafe_mode: bool,
+        spec: &LoaderSpec,
+    ) -> Result<()> {
+        // Copy proxy files specified in spec
+        for file_name in &spec.proxy_files {
+            let source_file = loader_source.join(file_name);
+            if source_file.exists() {
+                let target_file = game_dir.join(file_name);
+                let is_pinned = unsafe_mode
+                    && (file_name == "d3d11.dll"
+                        || spec.config_file.as_deref() == Some(file_name.as_str()));
+                if is_pinned && target_file.exists() {
+                    println!(
+                        "Proxy: Unsafe mode active. Preserving existing {:?}",
+                        target_file
+                    );
+                } else {
+                    println!("Proxy: Copying {} to {:?}", file_name, target_file);
+                    std::fs::copy(&source_file, &target_file).map_err(LoaderError::Io)?;
+                }
+            }
         }
 
-        let target_dll = game_dir.join("d3d11.dll");
-        if unsafe_mode && target_dll.exists() {
-            println!(
-                "Proxy: Unsafe mode active. Preserving existing {:?}",
-                target_dll
-            );
-        } else {
-            println!("Proxy: Copying loader to {:?}", target_dll);
-            std::fs::copy(&source_dll, &target_dll).map_err(LoaderError::Io)?;
-        }
-
-        // Copy d3dx.ini
-        let source_ini = loader_source.join("d3dx.ini");
-        if source_ini.exists() {
-            let target_ini = game_dir.join("d3dx.ini");
-            if unsafe_mode && target_ini.exists() {
+        // If config file is specified, patch for proxy mode
+        if let Some(cfg_file) = &spec.config_file {
+            let target_cfg = game_dir.join(cfg_file);
+            if target_cfg.exists() {
                 println!(
-                    "Proxy: Unsafe mode active. Preserving existing {:?}",
-                    target_ini
+                    "Proxy: Patching {} (target={}, module=d3d11.dll)",
+                    cfg_file, game_exe
                 );
-            } else {
-                println!("Proxy: Copying d3dx.ini to {:?}", target_ini);
-                std::fs::copy(&source_ini, &target_ini).map_err(LoaderError::Io)?;
-
-                // Patch d3dx.ini for Proxy Mode
-                println!(
-                    "Proxy: Patching d3dx.ini (target={}, module=d3d11.dll)",
-                    game_exe
-                );
-                // Ensure target refers to the game executable
-                IniDocument::patch_file(&target_ini, "Loader", "target", game_exe)?;
-                // Ensure module is set to d3d11.dll (Passive Mode)
-                IniDocument::patch_file(&target_ini, "Loader", "module", "d3d11.dll")?;
+                let _ = IniDocument::patch_file(&target_cfg, "Loader", "target", game_exe);
+                let primary_dll = spec
+                    .proxy_files
+                    .iter()
+                    .find(|f| f.ends_with(".dll"))
+                    .map(|s| s.as_str())
+                    .unwrap_or("d3d11.dll");
+                let _ = IniDocument::patch_file(&target_cfg, "Loader", "module", primary_dll);
             }
         }
 
         // Symlink support directories
-        let support_dirs = ["Core", "ShaderFixes"];
-        for dir_name in support_dirs {
+        for dir_name in &spec.support_dirs {
             let source_dir = loader_source.join(dir_name);
             if source_dir.exists() {
                 let target_dir = game_dir.join(dir_name);
@@ -236,53 +256,51 @@ impl LoaderContext {
             }
         }
 
-        // Copy Compiler DLLs
-        let compilers = ["d3dcompiler_47.dll", "nvapi64.dll", "3dmloader.dll"];
-        for comp in compilers {
-            let compiler_path = loader_source.join(comp);
-            if compiler_path.exists() {
-                let target_compiler = game_dir.join(comp);
-                println!("Proxy: Copying {} to {:?}", comp, target_compiler);
-                let _ = std::fs::copy(&compiler_path, target_compiler);
-            }
-        }
-
         Ok(())
     }
 
-    /// Uninstalls the loader files (removes them from game directory).
-    /// If `remove_reshade` is true, it also deletes dxgi.dll.
+    /// Uninstalls the loader files using the default XXMI / 3DMigoto spec.
     pub async fn uninstall_loader(
         game_dir: &Path,
         prefix_path: Option<&Path>,
         remove_reshade: bool,
         unsafe_mode: bool,
     ) -> Result<()> {
-        let mut files = vec![
-            "version.dll",
-            "winmm.dll",
-            "d3dcompiler_47.dll",
-            "d3dcompiler_46.dll",
-            "nvapi64.dll",
-            "ReShade.ini",
-            "3dmloader.dll",
-            "3dmloader.exe",
-        ];
+        let spec = LoaderSpec::default_xxmi();
+        Self::uninstall_loader_with_spec(game_dir, prefix_path, remove_reshade, unsafe_mode, &spec)
+            .await
+    }
 
-        if !unsafe_mode {
-            files.push("d3d11.dll");
-            files.push("d3dx.ini");
+    /// Uninstalls the loader files driven by the given LoaderSpec.
+    pub async fn uninstall_loader_with_spec(
+        game_dir: &Path,
+        prefix_path: Option<&Path>,
+        remove_reshade: bool,
+        unsafe_mode: bool,
+        spec: &LoaderSpec,
+    ) -> Result<()> {
+        let mut files_to_remove = spec.proxy_files.clone();
+        if !files_to_remove.iter().any(|f| f == "ReShade.ini") {
+            files_to_remove.push("ReShade.ini".to_string());
         }
 
         if remove_reshade {
-            files.push("dxgi.dll");
-            files.push("ReShade.dll");
+            if !files_to_remove.iter().any(|f| f == "dxgi.dll") {
+                files_to_remove.push("dxgi.dll".to_string());
+            }
+            if !files_to_remove.iter().any(|f| f == "ReShade.dll") {
+                files_to_remove.push("ReShade.dll".to_string());
+            }
         }
 
-        for file in files {
-            let path = game_dir.join(file);
-            if path.exists() {
-                let _ = std::fs::remove_file(&path);
+        for file in files_to_remove {
+            let is_pinned = unsafe_mode
+                && (file == "d3d11.dll" || spec.config_file.as_deref() == Some(file.as_str()));
+            if !is_pinned {
+                let path = game_dir.join(file);
+                if path.exists() {
+                    let _ = std::fs::remove_file(&path);
+                }
             }
         }
 
@@ -295,8 +313,7 @@ impl LoaderContext {
         }
 
         // Cleanup support directories
-        let dirs = &["Core", "ShaderFixes"];
-        for dir in dirs {
+        for dir in &spec.support_dirs {
             let path = game_dir.join(dir);
             if path.exists() {
                 if path.is_dir() {
@@ -307,8 +324,8 @@ impl LoaderContext {
             }
         }
 
-        // Specifically handle 'Mods' symlink separately to avoid accidental recursion
-        let mods_path = game_dir.join("Mods");
+        // Specifically handle mods_target_dir symlink separately to avoid accidental recursion
+        let mods_path = game_dir.join(&spec.mods_target_dir);
         if mods_path.exists() {
             if let Ok(meta) = std::fs::symlink_metadata(&mods_path) {
                 if meta.file_type().is_symlink() {
